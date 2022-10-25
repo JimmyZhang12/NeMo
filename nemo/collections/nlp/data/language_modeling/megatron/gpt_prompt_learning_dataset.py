@@ -123,8 +123,8 @@ class GPTPromptLearningDataset(Dataset):
         skipped = 0
 
         for json_line in tqdm(dataset):
-
-            # Read example dict or load the information for a single example from .json file
+            if (len(self.examples) > 8100):	
+                break            # Read example dict or load the information for a single example from .json file
             if type(json_line) == dict:
                 doc = json_line
             else:
@@ -164,6 +164,7 @@ class GPTPromptLearningDataset(Dataset):
                 input_ids = input_ids + [self.tokenizer.eos_id]
 
             # Try to truncate input text to fit into the max sequence length
+            self.max_seq_length = 512
             if len(input_ids) > self.max_seq_length:
                 input_ids = self._truncate_input(truncation_field, input_ids, taskname, doc)
 
@@ -333,7 +334,7 @@ class GPTPromptLearningDataset(Dataset):
 
         # Get max sequence length of batch
         batch_max = max(len(ids) for ids in input_ids)
-
+        batch_max = 512
         if tp_workers > 1:
             # more sure the sequence length is multiply of number of tp_workers, needed for sequence parallel.
             resi_padding = (tp_workers - (batch_max - 1) % tp_workers) % tp_workers
