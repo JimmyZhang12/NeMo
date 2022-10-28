@@ -630,8 +630,8 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
         #     # async grad allreduce is not currently implemented for O1/autocasting mixed precision training
         #     # so we all-reduce gradients after the pipeline
         self.allreduce_gradients() 
-        self.prompt_encoder.print()
-        input()
+        # self.prompt_encoder.print()
+        # input()
 
 
         ## logging
