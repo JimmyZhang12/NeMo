@@ -298,6 +298,9 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
         # For fp16, cannot cast the model weights as AMP will complain
         if self.trainer.precision == 'bf16':
             self.prompt_encoder = self.prompt_encoder.to(dtype=self.autocast_dtype)
+        # print(self.prompt_encoder)
+        # print(type(self.prompt_encoder))
+        # input()
 
     def add_ptuned_prompts_to_prompt_table(self):
         """
@@ -618,16 +621,19 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
         self._optimizer.zero_grad()
         loss_mean = self.fwd_bwd_step(batch, batch_idx, forward_only=False)
 
-        if self.megatron_amp_o2:
-            # when using pipeline parallelism grads must be all-reduced after the pipeline (not asynchronously)
-            if self.cfg.get('pipeline_model_parallel_size', 1) > 1 or self.cfg.get('sequence_parallel', False):
-                # main grads are stored in the MainParamsOptimizer wrapper
-                self._optimizer.allreduce_main_grads()
-        else:
-            # async grad allreduce is not currently implemented for O1/autocasting mixed precision training
-            # so we all-reduce gradients after the pipeline
-            self.allreduce_gradients() 
-            
+        # if self.megatron_amp_o2:
+        #     # when using pipeline parallelism grads must be all-reduced after the pipeline (not asynchronously)
+        #     if self.cfg.get('pipeline_model_parallel_size', 1) > 1 or self.cfg.get('sequence_parallel', False):
+        #         # main grads are stored in the MainParamsOptimizer wrapper
+        #         self._optimizer.allreduce_main_grads()
+        # else:
+        #     # async grad allreduce is not currently implemented for O1/autocasting mixed precision training
+        #     # so we all-reduce gradients after the pipeline
+        self.allreduce_gradients() 
+        self.prompt_encoder.print()
+        input()
+
+
         ## logging
         # we can only log on one rank if it is rank zero so we broadcast from last rank
         # we can avoid this broadcast by updating the PTL log function to accept specific ranks
