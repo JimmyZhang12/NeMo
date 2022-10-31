@@ -196,6 +196,15 @@ class PromptEncoderMLP(NeuralModule, Exportable):
         output_embeds, bias_parallel = self.second(intermediate_parallel)
         output_embeds = output_embeds + bias_parallel
         return output_embeds
+    def print(self):
+        torch.set_printoptions(precision=8)
+        if (self.first.output is not None):
+            prt = f"First: {torch.cuda.current_device()} \
+                {self.first.output[0][0]} \n \
+                {self.first.output.grad} \n \
+                "
+            print(prt)
+
 
 
 class PromptEncoder(NeuralModule, Exportable):
