@@ -618,6 +618,14 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
         # we zero grads here because we also call backward in the apex fwd/bwd functions
         self._optimizer.zero_grad()
         loss_mean = self.fwd_bwd_step(batch, batch_idx, forward_only=False)
+
+        # if hasattr(self,'curr_step'):
+        #     self.curr_step += 1
+        #     if self.curr_step > 30:
+        #         self.prompt_encoder.print()
+        # else:
+        #     self.curr_step = 0
+
         self.allreduce_gradients()
         
         if hasattr(self,'curr_step'):
@@ -627,6 +635,7 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
                 input()
         else:
             self.curr_step = 0
+
         ## logging
         # we can only log on one rank if it is rank zero so we broadcast from last rank
         # we can avoid this broadcast by updating the PTL log function to accept specific ranks
