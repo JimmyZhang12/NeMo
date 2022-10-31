@@ -621,17 +621,21 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
         self._optimizer.zero_grad()
         loss_mean = self.fwd_bwd_step(batch, batch_idx, forward_only=False)
 
-        # if self.megatron_amp_o2:
-        #     # when using pipeline parallelism grads must be all-reduced after the pipeline (not asynchronously)
-        #     if self.cfg.get('pipeline_model_parallel_size', 1) > 1 or self.cfg.get('sequence_parallel', False):
-        #         # main grads are stored in the MainParamsOptimizer wrapper
-        #         self._optimizer.allreduce_main_grads()
-        # else:
-        #     # async grad allreduce is not currently implemented for O1/autocasting mixed precision training
-        #     # so we all-reduce gradients after the pipeline
-        self.allreduce_gradients() 
-        # self.prompt_encoder.print()
-        # input()
+        if self.megatron_amp_o2:
+            # when using pipeline parallelism grads must be all-reduced after the pipeline (not asynchronously)
+            if self.cfg.get('pipeline_model_parallel_size', 1) > 1 or self.cfg.get('sequence_parallel', False):
+                # main grads are stored in the MainParamsOptimizer wrapper
+                self._optimizer.allreduce_main_grads()
+        else:
+            self.allreduce_gradients() 
+        
+        if hasattr(self,'curr_step'):
+            self.curr_step += 1
+            if self.curr_step > 30:
+                self.prompt_encoder.print()
+                input()
+        else:
+            self.curr_step = 0
 
 
         ## logging
