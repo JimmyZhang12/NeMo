@@ -238,6 +238,7 @@ class MainParamsOptimizerWrapper(torch.optim.Optimizer):
                 if param.requires_grad:
                     # float16 params:
                     if param.type() in ['torch.cuda.HalfTensor', 'torch.cuda.BFloat16Tensor']:
+
                         float16_params_this_group.append(param)
 
                         # Allocate the main parameter
@@ -305,7 +306,7 @@ class MainParamsOptimizerWrapper(torch.optim.Optimizer):
                 else:
                     main_param.grad.add_(param.grad.data)
                 # Deallocate grad memory.
-                param.grad = None
+                # param.grad = None
 
             # Asynchronous gradients allreduce accross data_parallel ranks
             if self._require_backward_grad_sync:

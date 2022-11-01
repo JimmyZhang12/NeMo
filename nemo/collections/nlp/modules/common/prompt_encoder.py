@@ -144,6 +144,7 @@ class PromptEncoderMLP(NeuralModule, Exportable):
             init_std: the MLP init std value 
         """
         super().__init__()
+        self.curr_step = 0
         self.hidden_size = hidden_size
         self.output_size = output_size
         self.total_virtual_tokens = total_virtual_tokens
@@ -155,6 +156,9 @@ class PromptEncoderMLP(NeuralModule, Exportable):
 
         # embedding
         self.embedding = torch.nn.Embedding(self.total_virtual_tokens, output_size)
+
+        print(f"hs {self.hidden_size} ")
+        print(f"os {self.output_size} ")
 
         no_async_tensor_model_parallel_allreduce = (
             parallel_state.get_tensor_model_parallel_world_size() == 1 or sequence_parallel
@@ -185,6 +189,7 @@ class PromptEncoderMLP(NeuralModule, Exportable):
 
     @typecheck()
     def forward(self, taskname_embeddings) -> torch.Tensor:
+        self.curr_step += 1
         input_embeds = self.embedding(self.indices).unsqueeze(0)
         batch_size, task_seq_length, _ = taskname_embeddings.shape
         input_embeds = input_embeds.expand(batch_size, self.total_virtual_tokens, self.output_size).clone()
@@ -196,14 +201,7 @@ class PromptEncoderMLP(NeuralModule, Exportable):
         output_embeds, bias_parallel = self.second(intermediate_parallel)
         output_embeds = output_embeds + bias_parallel
         return output_embeds
-    def print(self):
-        torch.set_printoptions(precision=8)
-        if (self.first.output is not None):
-            prt = f"First: {torch.cuda.current_device()} \
-                {self.first.output[0][0]} \n \
-                {self.first.output.grad} \n \
-                "
-            print(prt)
+
 
 
 
