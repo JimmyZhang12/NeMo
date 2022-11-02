@@ -614,19 +614,34 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
 
         return loss_mean
 
+    def print_arr(self, arr, id):
+        torch.set_printoptions(precision=4)
+        torch.cuda.synchronize()
+        if arr is not None:
+            prt = f"{id} : {torch.cuda.current_device()} - {self.curr_step} - {arr.shape} \n \
+                {arr} \n \
+                ************* \n"   
+        else:
+            prt = f"***First: {torch.cuda.current_device()} - {self.curr_step} \n \
+                {arr} \n \
+                ************* \n"    
+        print(prt)
+        torch.cuda.synchronize()
+
     def training_step(self, batch, batch_idx):
         # we zero grads here because we also call backward in the apex fwd/bwd functions
         self._optimizer.zero_grad()
         loss_mean = self.fwd_bwd_step(batch, batch_idx, forward_only=False)
+        print(loss_mean)
+        input()
+        if not hasattr(self,'curr_step'):
+            self.curr_step = 0
+        self.curr_step += 1
 
-        # if hasattr(self,'curr_step'):
-        #     self.curr_step += 1
-        #     if self.curr_step > 30:
-        #         self.prompt_encoder.print()
-        # else:
-        #     self.curr_step = 0
-
-        self.allreduce_gradients()
+        self.print_arr(self.prompt_encoder.first.weight.grad, "PRE ALLREDUCE")
+        self.allreduce_gradients() 
+        self.print_arr(self.prompt_encoder.first.weight.grad, "POST ALLREDUCE")
+        input()
         
         if hasattr(self,'curr_step'):
             self.curr_step += 1
