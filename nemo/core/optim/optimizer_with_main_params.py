@@ -15,7 +15,7 @@
 from contextlib import contextmanager
 
 import torch
-
+import traceback
 from nemo.utils import logging
 
 try:
@@ -95,7 +95,10 @@ class GradBucket(object):
     def allreduce_buffer(self):
         """Synchronous buffer data allreduce """
         self.data.div_(get_data_parallel_world_size())
+        torch.cuda.synchronize()
+        # print(f"add reduce {self.data.shape} {self.data}")
         torch.distributed.all_reduce(self.data, group=get_data_parallel_group())
+        # print(f"add reduce 2 {self.data.shape} {self.data}")
 
     def get(self, shape, start_index):
         """Return a tensor with the input `shape` as a view into the
@@ -414,6 +417,11 @@ class MainParamsOptimizerWrapper(torch.optim.Optimizer):
         # we cannot start weight update until all async grad AR works are done.
         if self._async_grad_allreduce:
             torch.cuda.synchronize()
+
+        # print("optimizer step")
+        # traceback.print_stack()
+        # input()
+
 
         # Step the optimizer.
         self.optimizer.step(closure=None, **kwargs)

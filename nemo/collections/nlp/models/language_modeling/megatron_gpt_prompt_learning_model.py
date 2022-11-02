@@ -196,6 +196,22 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
         self.grad_clip_pl_default = True
         self.lowest_val_loss = None
 
+
+
+    def print_arr(self, arr, id):
+        torch.set_printoptions(precision=4)
+        torch.cuda.synchronize()
+        if arr is not None:
+            prt = f"{id} : {torch.cuda.current_device()} - {self.curr_step} - {arr.shape} \n \
+                {arr} \n \
+                ************* \n"   
+        else:
+            prt = f"***First: {torch.cuda.current_device()} - {self.curr_step} \n \
+                {arr} \n \
+                ************* \n"    
+        print(prt)
+        torch.cuda.synchronize()
+
     def load_task_templates(self, task_templates):
         """
         Takes in the task template portion of the config and turns  
@@ -618,38 +634,34 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
 
     def training_step(self, batch, batch_idx):
 
+        if not hasattr(self,'curr_step'):
+            self.curr_step = 0
+        self.curr_step += 1
+
         # we zero grads here because we also call backward in the apex fwd/bwd functions
         self._optimizer.zero_grad()
         loss_mean = self.fwd_bwd_step(batch, batch_idx, forward_only=False)
+
+
 
         if self.megatron_amp_o2:
             # when using pipeline parallelism grads must be all-reduced after the pipeline (not asynchronously)
             if self.cfg.get('pipeline_model_parallel_size', 1) > 1 or self.cfg.get('sequence_parallel', False):
                 # main grads are stored in the MainParamsOptimizer wrapper
+                self.print_arr(self.prompt_encoder.first.weight.main_grad, "PRE ALLREDUCE MAINGRAD")
                 self._optimizer.allreduce_main_grads()
-        else:
-            self.allreduce_gradients() 
-            
-        if not hasattr(self,'curr_step'):
-            self.curr_step = 0
-        def print_arr(arr):
-            torch.cuda.synchronize()
-            if arr is not None:
-                prt = f"***First: {torch.cuda.current_device()} - {self.curr_step} - {arr.shape} \n \
-                    {arr} \n \
-                    ************* \n"   
-            else:
-                prt = f"***First: {torch.cuda.current_device()} - {self.curr_step} \n \
-                    {arr} \n \
-                    ************* \n"    
-            print(prt)
-            torch.cuda.synchronize()
+                self.print_arr(self.prompt_encoder.first.weight.main_grad, "POST ALLREDUCE MAINGRAD")
 
-        self.curr_step += 1
-        torch.set_printoptions(precision=4)
-        # if (self.prompt_encoder.first.weight is not None):
-        #     print_arr(self.prompt_encoder.first.weight)
-        #     input()
+        else:
+            self.print_arr(self.prompt_encoder.first.weight.grad, "PRE ALLREDUCE")
+            self.allreduce_gradients() 
+            self.print_arr(self.prompt_encoder.first.weight.grad, "POST ALLREDUCE")
+
+            
+
+        torch.cuda.synchronize()
+
+        input()
 
 
         ## logging
