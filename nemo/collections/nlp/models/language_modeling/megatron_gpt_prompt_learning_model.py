@@ -642,7 +642,8 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
         self._optimizer.zero_grad()
         loss_mean = self.fwd_bwd_step(batch, batch_idx, forward_only=False)
 
-
+        print(loss_mean)
+        input()
 
         if self.megatron_amp_o2:
             # when using pipeline parallelism grads must be all-reduced after the pipeline (not asynchronously)
