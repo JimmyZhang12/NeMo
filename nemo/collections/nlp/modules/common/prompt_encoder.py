@@ -171,6 +171,7 @@ class PromptEncoderMLP(NeuralModule, Exportable):
             sequence_parallel_enabled=sequence_parallel,
             no_async_tensor_model_parallel_allreduce=no_async_tensor_model_parallel_allreduce,
             gradient_accumulation_fusion=gradient_accumulation_fusion,
+            debug=True
         )
         self.second = tensor_parallel.RowParallelLinear(
             self.hidden_size,

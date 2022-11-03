@@ -632,8 +632,7 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
         # we zero grads here because we also call backward in the apex fwd/bwd functions
         self._optimizer.zero_grad()
         loss_mean = self.fwd_bwd_step(batch, batch_idx, forward_only=False)
-        print(loss_mean)
-        input()
+        
         if not hasattr(self,'curr_step'):
             self.curr_step = 0
         self.curr_step += 1
