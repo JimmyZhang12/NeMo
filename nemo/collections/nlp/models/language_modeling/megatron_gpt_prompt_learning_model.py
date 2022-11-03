@@ -630,6 +630,8 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
             # we're not on the last pipeline stage so no losses
             loss_mean = torch.tensor(0.0).cuda()
 
+        print(loss_tensor)
+
         return loss_mean
 
     def training_step(self, batch, batch_idx):

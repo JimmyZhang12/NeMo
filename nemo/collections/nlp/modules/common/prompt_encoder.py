@@ -157,8 +157,6 @@ class PromptEncoderMLP(NeuralModule, Exportable):
         # embedding
         self.embedding = torch.nn.Embedding(self.total_virtual_tokens, output_size)
 
-        print(f"hs {self.hidden_size} ")
-        print(f"os {self.output_size} ")
 
         no_async_tensor_model_parallel_allreduce = (
             parallel_state.get_tensor_model_parallel_world_size() == 1 or sequence_parallel
