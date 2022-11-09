@@ -123,7 +123,8 @@ class GPTPromptLearningDataset(Dataset):
         skipped = 0
 
         for json_line in tqdm(dataset):
-
+            if len(self.examples) > 8000:
+                break
             # Read example dict or load the information for a single example from .json file
             if type(json_line) == dict:
                 doc = json_line
@@ -382,9 +383,8 @@ class GPTPromptLearningDataset(Dataset):
                 ids.extend([self.pad_token_id] * padding_length)
                 loss_mask.extend([0.0] * padding_length)
             elif input_length > batch_max:
-                ids = ids[:batch_max]
-                loss_mask = loss_mask[:batch_max]
-            assert(len(ids) == batch_max)
+                del ids[batch_max:]
+                del loss_mask[batch_max:]
             # Account for padding in loss mask
 
             batch_loss_masks.append(torch.tensor(loss_mask, dtype=torch.float))
@@ -393,8 +393,8 @@ class GPTPromptLearningDataset(Dataset):
         try:
             input_ids = torch.tensor(input_ids, dtype=torch.long)
         except:
-            raise Exception(f"test: {[len(i) for i in input_ids]}")
-
+            raise Exception(f"test: {[len(i) for i in input_ids]} {[len(i) for i in answer_starts]} {batch_max}")
+ 
         batch_loss_masks = torch.stack(batch_loss_masks)
 
         return padded_input_ids, batch_loss_masks
@@ -408,7 +408,7 @@ class GPTPromptLearningDataset(Dataset):
         task_id_nums = torch.cuda.LongTensor(task_id_nums)
         batch_max = input_lengths.max().item()
         batch_max += self.tokens_to_generate
-
+        batch_max = 512
         input_ids, _ = self.pad_batch_and_build_loss_mask(input_ids, batch_max, answer_starts)
         input_ids = input_ids.cuda()
         input_ids = torch.cuda.LongTensor(input_ids)
