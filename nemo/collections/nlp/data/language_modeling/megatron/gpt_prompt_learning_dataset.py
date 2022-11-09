@@ -165,7 +165,11 @@ class GPTPromptLearningDataset(Dataset):
                 input_ids = input_ids + [self.tokenizer.eos_id]
 
             # Try to truncate input text to fit into the max sequence length
+<<<<<<< HEAD
             self.max_seq_length = 1024
+=======
+            self.max_seq_length = 512
+>>>>>>> fix sqlen to 512
             if len(input_ids) > self.max_seq_length:
                 input_ids = self._truncate_input(truncation_field, input_ids, taskname, doc)
 
@@ -335,7 +339,11 @@ class GPTPromptLearningDataset(Dataset):
 
         # Get max sequence length of batch
         batch_max = max(len(ids) for ids in input_ids)
+<<<<<<< HEAD
         batch_max = 1024
+=======
+        batch_max = 512
+>>>>>>> fix sqlen to 512
 
         if tp_workers > 1:
             # more sure the sequence length is multiply of number of tp_workers, needed for sequence parallel.
