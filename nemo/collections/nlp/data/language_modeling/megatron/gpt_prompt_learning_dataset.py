@@ -378,6 +378,7 @@ class GPTPromptLearningDataset(Dataset):
 
             # Pad to max length
             input_length = len(ids)
+<<<<<<< HEAD
             if input_length < batch_max:
                 padding_length = batch_max - input_length	
                 pad_extend = [self.pad_token_id] * padding_length	
@@ -388,12 +389,23 @@ class GPTPromptLearningDataset(Dataset):
                 del loss_mask[batch_max:]
 
             # Account for padding in loss mask	
+=======
+            padding_length = batch_max - input_length
+            pad_extend = [self.pad_token_id] * padding_length
+            ids = ids + pad_extend
+            padded_input_ids.append(ids)
+
+            # Account for padding in loss mask
+>>>>>>> fix for num worker 0 causing issues in losses after 1 epoch (#5379) (#5384)
             loss_mask.extend([0.0] * padding_length)
             batch_loss_masks.append(torch.tensor(loss_mask, dtype=torch.float))
 
         # Make into torch tensors
         padded_input_ids = torch.tensor(padded_input_ids, dtype=torch.long)
+<<<<<<< HEAD
  
+=======
+>>>>>>> fix for num worker 0 causing issues in losses after 1 epoch (#5379) (#5384)
         batch_loss_masks = torch.stack(batch_loss_masks)
 
         return padded_input_ids, batch_loss_masks
