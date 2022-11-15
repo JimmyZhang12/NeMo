@@ -612,7 +612,6 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
         return loss_mean
 
     def training_step(self, batch, batch_idx):
-        torch.cuda.empty_cache()
         print(f"mem train {torch.cuda.memory_allocated()/(1024**2)}")
         print(f"mem_reserved train {torch.cuda.memory_reserved()/(1024**2)}")
         print(f"mem_reserved train {torch.cuda.memory_reserved()}")

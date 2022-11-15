@@ -377,7 +377,6 @@ class NLPSaveRestoreConnector(SaveRestoreConnector):
         print(type(instance))
         print(instance)
         print(f"mem abc-{torch.cuda.memory_allocated()/(1024**2)}")
-        torch.cuda.empty_cache()
         print(f"mem abc-{torch.cuda.memory_allocated()/(1024**2)}")
         return instance
 
