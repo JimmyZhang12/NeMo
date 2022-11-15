@@ -59,7 +59,7 @@ try:
 
 except (ImportError, ModuleNotFoundError):
     HAVE_APEX = False
-
+import time
 
 __all__ = ['MegatronGPTPromptLearningModel']
 
@@ -97,6 +97,7 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
             return_config=True,
             save_restore_connector=save_restore_connector,
         )
+        print(f"mem a-{torch.cuda.memory_allocated()/(1024**2)}")
 
         # Need to overwrite some params in frozen model's config before restoring
         with open_dict(frozen_model_cfg):
@@ -122,6 +123,7 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
             self.autocast_dtype = torch.bfloat16
         else:
             raise ValueError('precision must be in [32, 16, "bf16"]')
+        print(f"******************mem ab-{torch.cuda.memory_allocated()/(1024**2)}")
 
         if cfg.get('language_model_path', None):
             self.frozen_model = MegatronGPTModel.restore_from(
@@ -130,7 +132,8 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
                 save_restore_connector=save_restore_connector,
                 override_config_path=frozen_model_cfg,
             ).to(dtype=self.autocast_dtype)
-
+        torch.cuda.empty_cache()
+        print(f"******************mem b-{torch.cuda.memory_allocated()/(1024**2)}")
         self.megatron_amp_o2 = self.cfg.get('megatron_amp_O2', False)
         self.pipeline_parallel = self.cfg.get('pipeline_model_parallel_size', 1) > 1
         self.tokenizer = self.frozen_model.tokenizer
@@ -194,6 +197,7 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
         # make sure the default pytorch lightning gradient clipping in the basemodel
         self.grad_clip_pl_default = True
         self.lowest_val_loss = None
+        print(f"mem 3-{torch.cuda.memory_allocated()/(1024**2)}")
 
     def load_task_templates(self, task_templates):
         """
@@ -608,6 +612,12 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
         return loss_mean
 
     def training_step(self, batch, batch_idx):
+        torch.cuda.empty_cache()
+        print(f"mem train {torch.cuda.memory_allocated()/(1024**2)}")
+        print(f"mem_reserved train {torch.cuda.memory_reserved()/(1024**2)}")
+        print(f"mem_reserved train {torch.cuda.memory_reserved()}")
+        input()
+
         # we zero grads here because we also call backward in the apex fwd/bwd functions
         self._optimizer.zero_grad()
         loss_mean = self.fwd_bwd_step(batch, batch_idx, forward_only=False)
@@ -743,6 +753,7 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
 
         self.setup_training_data()
         self.setup_validation_data()
+        print(f"mem 4 {torch.cuda.memory_allocated()/(1024**2)}")
 
     def setup_training_data(self, training_data_config=None):
         if self.cfg.data.get('train_ds', None):

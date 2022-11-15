@@ -371,6 +371,14 @@ class NLPSaveRestoreConnector(SaveRestoreConnector):
         state_dict = self.modify_state_dict(conf, state_dict)
         super().load_instance_with_state_dict(instance, state_dict, strict)
         logging.info(f'Model {instance.__class__.__name__} was successfully restored from {restore_path}.')
+
+        import sys
+        print(f"{sys.getsizeof(instance)}")
+        print(type(instance))
+        print(instance)
+        print(f"mem abc-{torch.cuda.memory_allocated()/(1024**2)}")
+        torch.cuda.empty_cache()
+        print(f"mem abc-{torch.cuda.memory_allocated()/(1024**2)}")
         return instance
 
 
