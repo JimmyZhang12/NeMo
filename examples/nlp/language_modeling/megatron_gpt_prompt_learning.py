@@ -16,6 +16,8 @@ from omegaconf.omegaconf import OmegaConf, open_dict
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks.timer import Timer
 from pytorch_lightning.plugins.environments.torchelastic_environment import TorchElasticEnvironment
+import torch
+
 
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_prompt_learning_model import (
     MegatronGPTPromptLearningModel,
@@ -78,13 +80,16 @@ def main(cfg) -> None:
     with open_dict(cfg):
         cfg.model.precision = cfg.trainer.precision
 
+    print(f"mem 2-{torch.cuda.memory_allocated()/(1024**2)}")
+
     # load existing or init new soft prompt GPT model
-    if cfg.model.get("restore_path", None):
-        model = MegatronGPTPromptLearningModel.restore_from(
-            cfg.model.restore_path, cfg.model, trainer=trainer, save_restore_connector=NLPSaveRestoreConnector()
-        )
-    else:
-        model = MegatronGPTPromptLearningModel(cfg.model, trainer=trainer)
+    # if cfg.model.get("restore_path", None):
+    #     model = MegatronGPTPromptLearningModel.restore_from(
+    #         cfg.model.restore_path, cfg.model, trainer=trainer, save_restore_connector=NLPSaveRestoreConnector()
+    #     )
+    # else:
+    model = MegatronGPTPromptLearningModel(cfg.model, trainer=trainer)
+    print(f"mem 2-{torch.cuda.memory_allocated()/(1024**2)}")
 
     trainer.fit(model)
 
