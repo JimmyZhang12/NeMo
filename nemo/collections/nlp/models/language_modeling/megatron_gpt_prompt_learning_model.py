@@ -433,6 +433,8 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
         in the MegatronGPT class.
         """
         # Get embeddings for text tokens and insert virtual token embeddings
+        print(f"mem_reserved ppe  {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
+
         if self.frozen_model.model.pre_process:
             if inference:
                 input_embeds = self.embed_input_inference(input_ids, taskname_ids)
@@ -445,6 +447,7 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
                 encoder_input = tensor_parallel.mappings.scatter_to_sequence_parallel_region(encoder_input)
         else:
             encoder_input = None
+        print(f"mem_reserved pe  {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
 
         # Call forward on GPT model with preprocessed embeddings
         if self.autocast_dtype == torch.float32:
@@ -467,6 +470,7 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
                 set_inference_key_value_memory=set_inference_key_value_memory,
                 inference_max_sequence_len=inference_max_sequence_len,
             )
+        print(f"mem_reserved fwd  {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
 
         return output
 
@@ -614,12 +618,13 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
     def training_step(self, batch, batch_idx):
         print(f"mem train {torch.cuda.memory_allocated()/(1024**2)}")
         print(f"mem_reserved train {torch.cuda.memory_reserved()/(1024**2)}")
-        print(f"mem_reserved train {torch.cuda.memory_reserved()}")
-        input()
 
         # we zero grads here because we also call backward in the apex fwd/bwd functions
         self._optimizer.zero_grad()
         loss_mean = self.fwd_bwd_step(batch, batch_idx, forward_only=False)
+        print(f"mem_reserved train 2 {torch.cuda.memory_reserved()/(1024**2)}")
+        input()
+
         self.allreduce_gradients()
 
         ## logging
