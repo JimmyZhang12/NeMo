@@ -97,7 +97,7 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
             return_config=True,
             save_restore_connector=save_restore_connector,
         )
-        print(f"mem a-{torch.cuda.memory_allocated()/(1024**2)}")
+        # print(f"mem a-{torch.cuda.memory_allocated()/(1024**2)}")
 
         # Need to overwrite some params in frozen model's config before restoring
         with open_dict(frozen_model_cfg):
@@ -123,7 +123,7 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
             self.autocast_dtype = torch.bfloat16
         else:
             raise ValueError('precision must be in [32, 16, "bf16"]')
-        print(f"******************mem ab-{torch.cuda.memory_allocated()/(1024**2)}")
+        # print(f"******************mem ab-{torch.cuda.memory_allocated()/(1024**2)}")
 
         if cfg.get('language_model_path', None):
             self.frozen_model = MegatronGPTModel.restore_from(
@@ -133,7 +133,7 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
                 override_config_path=frozen_model_cfg,
             ).to(dtype=self.autocast_dtype)
         torch.cuda.empty_cache()
-        print(f"******************mem b-{torch.cuda.memory_allocated()/(1024**2)}")
+        # print(f"******************mem b-{torch.cuda.memory_allocated()/(1024**2)}")
         self.megatron_amp_o2 = self.cfg.get('megatron_amp_O2', False)
         self.pipeline_parallel = self.cfg.get('pipeline_model_parallel_size', 1) > 1
         self.tokenizer = self.frozen_model.tokenizer
