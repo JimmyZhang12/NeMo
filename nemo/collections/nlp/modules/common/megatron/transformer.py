@@ -249,14 +249,13 @@ class ParallelMLP(MegatronModule, adapter_mixins.AdapterModuleMixin):
     def forward(self, hidden_states):
 
         # [s, b, 4hp]
-        print_rank0(f"h to 4h  {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
+        # print_rank0(f"h to 4h  {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
         intermediate_parallel, bias_parallel = self.dense_h_to_4h(hidden_states)
-        print_rank0(f"{intermediate_parallel.shape}{bias_parallel.shape}")
-        print_rank0(f"post h to 4h  {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
+        # print_rank0(f"post h to 4h  {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
+        intermediate_parallel = intermediate_parallel.detach()
 
         if self.glu_activation_family:
             intermediate_parallel_2, bias_parallel_2 = self.dense_h_to_4h_2(hidden_states)
-
         if self.bias_activation_fusion:
             if self.activation == 'gelu':
                 intermediate_parallel = fused_bias_gelu(intermediate_parallel, bias_parallel)
@@ -280,6 +279,7 @@ class ParallelMLP(MegatronModule, adapter_mixins.AdapterModuleMixin):
                 intermediate_parallel = self.activation_func(intermediate_parallel + bias_parallel)
             else:
                 intermediate_parallel = self.activation_func(intermediate_parallel)
+        # print_rank0(f"post gelu  {self.dropout} {intermediate_parallel.shape} {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
 
         if self.dropout > 0:
             intermediate_parallel = F.dropout(intermediate_parallel, p=self.dropout, training=self.training)
@@ -293,8 +293,10 @@ class ParallelMLP(MegatronModule, adapter_mixins.AdapterModuleMixin):
             intermediate_parallel = self.normalization(intermediate_parallel)
 
         # [s, b, h]
+        # print_rank0(f"pre 4h to h  {intermediate_parallel.shape} {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
         output, output_bias = self.dense_4h_to_h(intermediate_parallel)
-        print_rank0(f"post 4h to 4  {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
+        # print_rank0(f"post 4h to h  {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
+        output = output.detach()
 
         return output, output_bias
 
@@ -670,7 +672,7 @@ class ParallelAttention(MegatronModule, adapter_mixins.AdapterModuleMixin):
         normalize_attention_scores=True,
     ):
         super(ParallelAttention, self).__init__()
-
+        self.attention_dropout = attention_dropout
         self.layer_number = max(1, layer_number)
         self.attention_type = attention_type
         self.attn_mask_type = attn_mask_type
@@ -939,6 +941,7 @@ class ParallelAttention(MegatronModule, adapter_mixins.AdapterModuleMixin):
                 mixed_x_layer = self._transpose_last_dim(mixed_x_layer, 3, True)
             mixed_x_layer = mixed_x_layer.view(*new_tensor_shape)
 
+            mixed_x_layer = mixed_x_layer.detach()
             # [sq, b, np, 3 * hn] --> 3 [sq, b, np, hn]
             (query_layer, key_layer, value_layer) = tensor_parallel.split_tensor_along_last_dim(mixed_x_layer, 3)
         else:
@@ -965,7 +968,7 @@ class ParallelAttention(MegatronModule, adapter_mixins.AdapterModuleMixin):
                 self.hidden_size_per_attention_head,
             )
             query_layer = query_layer.view(*new_tensor_shape)
-        print_rank0(f"ATN 1 {query_layer.shape} {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
+        # print_rank0(f"ATN 1 {query_layer.shape} {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
 
         if self.is_adapter_available():
             key_infused_adapter = self.get_from_adapter_layer(AdapterName.KEY_INFUSED)
@@ -1016,7 +1019,7 @@ class ParallelAttention(MegatronModule, adapter_mixins.AdapterModuleMixin):
 
         if get_key_value:
             present = (key_layer, value_layer)
-        print_rank0(f"ATN 1.5 {key_layer.shape} {value_layer.shape} {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
+        # print_rank0(f"ATN 1.5 {key_layer.shape} {value_layer.shape} {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
 
         if checkpoint_core_attention:
             context_layer = self._checkpointed_attention_forward(
@@ -1040,14 +1043,14 @@ class ParallelAttention(MegatronModule, adapter_mixins.AdapterModuleMixin):
                 relative_position_bias=relative_position_bias,
                 headscale_tensor=self.head_scale_tensor if self.headscale else None,
             )
-        print_rank0(f"ATN 2 {context_layer.shape} {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
+        # print_rank0(f"ATN 2 {context_layer.shape} {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
 
         # =================
         # Output. [sq, b, h]
         # =================
 
         output, bias = self.dense(context_layer)
-        print_rank0(f"ATN 3 {output.shape} {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
+        # print_rank0(f"ATN 3 {output.shape} {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
 
         if get_key_value:
             output = [output, present]
@@ -1565,7 +1568,6 @@ class ParallelTransformerLayer_(MegatronModule, adapter_mixins.AdapterModuleMixi
         cross_attention_relative_position_bias=None,
         checkpoint_core_attention=False,
     ):
-        print_rank0(f"pre ATN {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
 
         # Self attention.
         if rotary_pos_emb is not None:
@@ -1587,7 +1589,8 @@ class ParallelTransformerLayer_(MegatronModule, adapter_mixins.AdapterModuleMixi
             # Layer norm at the beginning of the transformer layer.
             if self.transformer_block_type in ['pre_ln', 'normformer']:
                 hidden_states = self.input_layernorm(hidden_states)
-            print_rank0(f"ATN layer norm 1 {hidden_states.shape} {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
+            # print_rank0(f"ATN layer norm 1 {hidden_states.shape} {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
+            print_rank0(f"pre ATN {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
 
             attention_output, attention_bias = self.self_attention(
                 hidden_states,
@@ -1600,7 +1603,7 @@ class ParallelTransformerLayer_(MegatronModule, adapter_mixins.AdapterModuleMixi
                 relative_position_bias=self_attention_relative_position_bias,
                 checkpoint_core_attention=checkpoint_core_attention,
             )
-            print_rank0(f"ATN atn matrix {attention_output.shape} {attention_bias.shape} {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
+            print_rank0(f"post ATN  {attention_output.shape} {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
 
             if get_key_value:
                 attention_output, presents = attention_output
@@ -1627,7 +1630,7 @@ class ParallelTransformerLayer_(MegatronModule, adapter_mixins.AdapterModuleMixi
 
             layernorm_input = bias_dropout_add_func(attention_output, attention_bias, residual, self.hidden_dropout)
             # print(f"Layer: {self.layer_number} Attention checksum {layernorm_input.sum()}")
-            print_rank0(f"ATN bias dropout add {layernorm_input.shape} {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
+            # print_rank0(f"ATN bias dropout add {layernorm_input.shape} {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
 
             if self.is_adapter_available():
                 adapter_1 = self.get_from_adapter_layer(AdapterName.PRE_ATTN_ADAPTER)
@@ -1705,7 +1708,6 @@ class ParallelTransformerLayer_(MegatronModule, adapter_mixins.AdapterModuleMixi
             if self.transformer_block_type == 'post_ln':
                 layernorm_input = normalization_output
         
-        print_rank0(f"post ATN  {normalization_output.shape} {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
 
         # MLP.
         mlp_output, mlp_bias = self.mlp(normalization_output)
@@ -1718,7 +1720,7 @@ class ParallelTransformerLayer_(MegatronModule, adapter_mixins.AdapterModuleMixi
         )
 
         output = bias_dropout_add_func(mlp_output, mlp_bias, residual, self.hidden_dropout)
-        # print(f"Layer: {self.layer_number} MLP + Dropout + Residual checksum {output.sum()}")
+        print_rank0(f"post MLP 2 {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
 
         if self.transformer_block_type == 'post_ln':
             output = self.post_attention_layernorm(output)
@@ -2039,7 +2041,7 @@ class ParallelTransformer(MegatronModule):
         moe_dropout=0.0,
     ):
         super(ParallelTransformer, self).__init__()
-
+        print(f"TEST TEST {hidden_dropout} {attention_dropout}")
         if kv_channels is None:
             assert (
                 hidden_size % num_attention_heads == 0
