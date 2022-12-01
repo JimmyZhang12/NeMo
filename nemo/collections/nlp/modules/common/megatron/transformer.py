@@ -1590,7 +1590,7 @@ class ParallelTransformerLayer_(MegatronModule, adapter_mixins.AdapterModuleMixi
             if self.transformer_block_type in ['pre_ln', 'normformer']:
                 hidden_states = self.input_layernorm(hidden_states)
             # print_rank0(f"ATN layer norm 1 {hidden_states.shape} {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
-            print_rank0(f"pre ATN {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
+            # print_rank0(f"pre ATN {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
 
             attention_output, attention_bias = self.self_attention(
                 hidden_states,
@@ -1603,7 +1603,7 @@ class ParallelTransformerLayer_(MegatronModule, adapter_mixins.AdapterModuleMixi
                 relative_position_bias=self_attention_relative_position_bias,
                 checkpoint_core_attention=checkpoint_core_attention,
             )
-            print_rank0(f"post ATN  {attention_output.shape} {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
+            # print_rank0(f"post ATN  {attention_output.shape} {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
 
             if get_key_value:
                 attention_output, presents = attention_output
@@ -1711,7 +1711,7 @@ class ParallelTransformerLayer_(MegatronModule, adapter_mixins.AdapterModuleMixi
 
         # MLP.
         mlp_output, mlp_bias = self.mlp(normalization_output)
-        print_rank0(f"post MLP  {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
+        # print_rank0(f"post MLP  {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
 
         residual = layernorm_input
 
@@ -1720,7 +1720,7 @@ class ParallelTransformerLayer_(MegatronModule, adapter_mixins.AdapterModuleMixi
         )
 
         output = bias_dropout_add_func(mlp_output, mlp_bias, residual, self.hidden_dropout)
-        print_rank0(f"post MLP 2 {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
+        # print_rank0(f"post MLP 2 {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
 
         if self.transformer_block_type == 'post_ln':
             output = self.post_attention_layernorm(output)
