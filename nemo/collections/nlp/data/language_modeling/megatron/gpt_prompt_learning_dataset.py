@@ -379,21 +379,20 @@ class GPTPromptLearningDataset(Dataset):
             # Pad to max length
             input_length = len(ids)
             if input_length < batch_max:
-                padding_length = batch_max - input_length
-                ids.extend([self.pad_token_id] * padding_length)
-                loss_mask.extend([0.0] * padding_length)
+                padding_length = batch_max - input_length	
+                pad_extend = [self.pad_token_id] * padding_length	
+                ids = ids + pad_extend
+                padded_input_ids.append(ids)	
             elif input_length > batch_max:
                 del ids[batch_max:]
                 del loss_mask[batch_max:]
-            # Account for padding in loss mask
 
+            # Account for padding in loss mask	
+            loss_mask.extend([0.0] * padding_length)
             batch_loss_masks.append(torch.tensor(loss_mask, dtype=torch.float))
 
         # Make into torch tensors
-        try:
-            input_ids = torch.tensor(input_ids, dtype=torch.long)
-        except:
-            raise Exception(f"test: {[len(i) for i in input_ids]} {[len(i) for i in answer_starts]} {batch_max}")
+        padded_input_ids = torch.tensor(padded_input_ids, dtype=torch.long)
  
         batch_loss_masks = torch.stack(batch_loss_masks)
 
