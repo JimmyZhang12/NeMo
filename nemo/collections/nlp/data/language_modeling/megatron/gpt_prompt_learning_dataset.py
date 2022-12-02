@@ -393,6 +393,7 @@ class GPTPromptLearningDataset(Dataset):
 
         # Make into torch tensors
         padded_input_ids = torch.tensor(padded_input_ids, dtype=torch.long)
+ 
         batch_loss_masks = torch.stack(batch_loss_masks)
 
         return padded_input_ids, batch_loss_masks
