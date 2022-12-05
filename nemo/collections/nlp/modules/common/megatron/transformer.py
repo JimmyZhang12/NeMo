@@ -83,6 +83,7 @@ except:
                 "Transformer Engine was not found. transformer_engine.pytorch.transformer.TransformerLayer will not work. Please see the NeMo README for installation instructions: https://github.com/NVIDIA/NeMo#megatron-gpt."
             )
 
+test_alloc = []
 
 """ We use the following notation throughout this file:
      h: hidden size
@@ -453,10 +454,11 @@ class CoreAttention(MegatronModule):
         attention_dropout=0.1,
         sequence_parallel=False,
         normalize_attention_scores=True,
+        buffer = None
     ):
 
         super(CoreAttention, self).__init__()
-
+        self.buffer = buffer
         self.precision = precision
         self.fp16 = precision == 16
         self.bf16 = precision == 'bf16'
@@ -549,6 +551,8 @@ class CoreAttention(MegatronModule):
         key_layer = key_layer.view(output_size[3], output_size[0] * output_size[1], -1)
 
         print_rank0(f"------pre baddbmm {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
+        matmul_result = self.buffer
+
         # preallocting input tensor: [b * np, sq, sk]
         matmul_input_buffer = torch.empty(
             output_size[0] * output_size[1],
@@ -556,8 +560,8 @@ class CoreAttention(MegatronModule):
             output_size[3],
             dtype=query_layer.dtype,
             device=torch.cuda.current_device(),
-        )
-
+            requires_grad = False
+        ) 
         # Raw attention scores. [b * np, sq, sk]
         matmul_result = torch.baddbmm(
             matmul_input_buffer,
@@ -566,7 +570,11 @@ class CoreAttention(MegatronModule):
             beta=0.0,
             alpha=(1.0 / self.norm_factor) if self.normalize_attention_scores else 1.0,
         )
-        print_rank0(f"------post baddbmm {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)} {matmul_result.shape}")
+        alpha *(bmm())
+
+        del matmul_input_buffer
+
+        print_rank0(f"------post baddbmm {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)} {matmul_result.shape} {matmul_result.shape}")
 
         # change view to [b, np, sq, sk]
         attention_scores = matmul_result.view(*output_size)
@@ -600,18 +608,19 @@ class CoreAttention(MegatronModule):
         # ===========================
         print_rank0(f"------pre scale_mask_softmax {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)} {attention_scores.shape}")
         # attention scores and attention mask [b, np, sq, sk]
-        attention_probs = self.scale_mask_softmax(attention_scores, attention_mask)
-        print_rank0(f"------pre scale_mask_softmax {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)} {attention_scores.shape}")
+        # attention_probs = self.scale_mask_softmax(attention_scores, attention_mask)
+        attention_probs = attention_scores
+        print_rank0(f"------pre scale_mask_softmax {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)} {attention_probs.shape}")
 
         # This is actually dropping out entire tokens to attend to, which might
         # seem a bit unusual, but is taken from the original Transformer paper.
         print_rank0(f"------pre attention_probs {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)} {attention_probs.shape}")
 
-        if not self.sequence_parallel:
-            with tensor_parallel.random.get_cuda_rng_tracker().fork():
-                attention_probs = self.attention_dropout(attention_probs)
-        else:
-            attention_probs = self.attention_dropout(attention_probs)
+        # if not self.sequence_parallel:
+        #     with tensor_parallel.random.get_cuda_rng_tracker().fork():
+        #         attention_probs = self.attention_dropout(attention_probs)
+        # else:
+        #     attention_probs = self.attention_dropout(attention_probs)
         print_rank0(f"------post] attention_probs {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)} {attention_probs.shape}")
 
         # =========================
@@ -649,7 +658,7 @@ class CoreAttention(MegatronModule):
         # [sq, b, np, hn] --> [sq, b, hp]
         new_context_layer_shape = context_layer.size()[:-2] + (self.hidden_size_per_partition,)
         context_layer = context_layer.view(*new_context_layer_shape)
-
+        
         return context_layer
 
 
@@ -683,6 +692,7 @@ class ParallelAttention(MegatronModule, adapter_mixins.AdapterModuleMixin):
         sequence_parallel=False,
         gradient_accumulation_fusion=False,
         normalize_attention_scores=True,
+        buffer=None,
     ):
         super(ParallelAttention, self).__init__()
         self.attention_dropout = attention_dropout
@@ -764,6 +774,7 @@ class ParallelAttention(MegatronModule, adapter_mixins.AdapterModuleMixin):
             attention_dropout=attention_dropout,
             sequence_parallel=sequence_parallel,
             normalize_attention_scores=normalize_attention_scores,
+            buffer=buffer
         )
 
         # Output.
@@ -1298,6 +1309,7 @@ class ParallelTransformerLayer_(MegatronModule, adapter_mixins.AdapterModuleMixi
         num_moe_experts=1,
         moe_frequency=1,
         moe_dropout=0.0,
+        buffer=None,
     ):
         super(ParallelTransformerLayer_, self).__init__()
 
@@ -1368,6 +1380,7 @@ class ParallelTransformerLayer_(MegatronModule, adapter_mixins.AdapterModuleMixi
                 sequence_parallel=sequence_parallel,
                 gradient_accumulation_fusion=gradient_accumulation_fusion,
                 normalize_attention_scores=normalize_attention_scores,
+                buffer=buffer
             )
 
             if transformer_block_type == 'normformer':
@@ -1647,7 +1660,7 @@ class ParallelTransformerLayer_(MegatronModule, adapter_mixins.AdapterModuleMixi
 
             layernorm_input = bias_dropout_add_func(attention_output, attention_bias, residual, self.hidden_dropout)
             # print(f"Layer: {self.layer_number} Attention checksum {layernorm_input.sum()}")
-            # print_rank0(f"ATN bias dropout add {layernorm_input.shape} {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
+            print_rank0(f"--post bias dropout add {layernorm_input.shape} {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
 
             if self.is_adapter_available():
                 adapter_1 = self.get_from_adapter_layer(AdapterName.PRE_ATTN_ADAPTER)
@@ -1727,7 +1740,7 @@ class ParallelTransformerLayer_(MegatronModule, adapter_mixins.AdapterModuleMixi
         
 
         # MLP.
-        print_rank0(f"--pre MLP  {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
+        print_rank0(f"--pre MLP  {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)} {normalization_output.shape}")
         mlp_output, mlp_bias = self.mlp(normalization_output)
         print_rank0(f"--post MLP  {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)} {mlp_output.shape}")
 
@@ -1799,6 +1812,7 @@ class ParallelTransformerLayer(ParallelTransformerLayer_):
         num_moe_experts=1,
         moe_frequency=1,
         moe_dropout=0.0,
+        buffer=None
     ):
         super(ParallelTransformerLayer, self).__init__(
             init_method=init_method,
@@ -1838,6 +1852,7 @@ class ParallelTransformerLayer(ParallelTransformerLayer_):
             num_moe_experts=num_moe_experts,
             moe_frequency=moe_frequency,
             moe_dropout=moe_dropout,
+            buffer=None,
         )
 
         if precision == 32:
@@ -2156,6 +2171,13 @@ class ParallelTransformer(MegatronModule):
         # TODO: Add similar assert for encoder-decoder.
 
         self.num_layers = self.get_num_layers(num_layers)
+        buffer = torch.empty(
+            (128,1023,1023),
+            dtype=torch.bfloat16,
+            device=torch.cuda.current_device(),
+            requires_grad = False
+        )
+                    
         # Transformer layers.
         def build_layer(layer_number):
             if isinstance(layer_type, list):
@@ -2227,6 +2249,7 @@ class ParallelTransformer(MegatronModule):
                     num_moe_experts=num_moe_experts,
                     moe_frequency=moe_frequency,
                     moe_dropout=moe_dropout,
+                    buffer=buffer,
                 )
 
         if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
