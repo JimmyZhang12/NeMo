@@ -123,7 +123,7 @@ class GPTPromptLearningDataset(Dataset):
         skipped = 0
 
         for json_line in tqdm(dataset):
-            if len(self.examples) > 8000:
+            if len(self.examples) > 2000:
                 break
             # Read example dict or load the information for a single example from .json file
             if type(json_line) == dict:
