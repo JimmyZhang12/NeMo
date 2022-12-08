@@ -554,25 +554,24 @@ class CoreAttention(MegatronModule):
         matmul_result = self.buffer
 
         # preallocting input tensor: [b * np, sq, sk]
-        matmul_input_buffer = torch.empty(
-            output_size[0] * output_size[1],
-            output_size[2],
-            output_size[3],
-            dtype=query_layer.dtype,
-            device=torch.cuda.current_device(),
-            requires_grad = False
-        ) 
+        # matmul_input_buffer = torch.empty(
+        #     output_size[0] * output_size[1],
+        #     output_size[2],
+        #     output_size[3],
+        #     dtype=query_layer.dtype,
+        #     device=torch.cuda.current_device(),
+        #     requires_grad = False
+        # ) 
         # Raw attention scores. [b * np, sq, sk]
-        matmul_result = torch.baddbmm(
-            matmul_input_buffer,
-            query_layer.transpose(0, 1),  # [b * np, sq, hn]
-            key_layer.transpose(0, 1).transpose(1, 2),  # [b * np, hn, sk]
-            beta=0.0,
-            alpha=(1.0 / self.norm_factor) if self.normalize_attention_scores else 1.0,
-        )
-        alpha *(bmm())
-
-        del matmul_input_buffer
+        # matmul_result = torch.baddbmm(
+        #     self.buffer,
+        #     query_layer.transpose(0, 1),  # [b * np, sq, hn]
+        #     key_layer.transpose(0, 1).transpose(1, 2),  # [b * np, hn, sk]
+        #     beta=0.0,
+        #     alpha=(1.0 / self.norm_factor) if self.normalize_attention_scores else 1.0,
+        # )
+        # alpha=(1.0 / self.norm_factor) if self.normalize_attention_scores else 1.0
+        # matmul_result = alpha*torch.bmm(query_layer.transpose(0, 1), key_layer.transpose(0, 1).transpose(1, 2))
 
         print_rank0(f"------post baddbmm {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)} {matmul_result.shape} {matmul_result.shape}")
 
@@ -658,7 +657,7 @@ class CoreAttention(MegatronModule):
         # [sq, b, np, hn] --> [sq, b, hp]
         new_context_layer_shape = context_layer.size()[:-2] + (self.hidden_size_per_partition,)
         context_layer = context_layer.view(*new_context_layer_shape)
-        
+
         return context_layer
 
 
@@ -1852,7 +1851,7 @@ class ParallelTransformerLayer(ParallelTransformerLayer_):
             num_moe_experts=num_moe_experts,
             moe_frequency=moe_frequency,
             moe_dropout=moe_dropout,
-            buffer=None,
+            buffer=buffer,
         )
 
         if precision == 32:
@@ -2172,7 +2171,7 @@ class ParallelTransformer(MegatronModule):
 
         self.num_layers = self.get_num_layers(num_layers)
         buffer = torch.empty(
-            (128,1023,1023),
+            (96,1023,1023),
             dtype=torch.bfloat16,
             device=torch.cuda.current_device(),
             requires_grad = False
@@ -2667,6 +2666,8 @@ class ParallelTransformer(MegatronModule):
                                 cross_attention_relative_position_bias=cross_attention_relative_position_bias,
                                 checkpoint_core_attention=checkpoint_core_attention,
                             )
+                        #do magic
+                        print(hidden_states.grad_fn)
 
         # Skip counter update for eval and activation checkpointing
         if torch.is_grad_enabled() and self.training:
