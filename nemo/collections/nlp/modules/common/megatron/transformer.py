@@ -101,6 +101,7 @@ test_alloc = []
 """
 
 def print_rank0(txt):
+    return
     ranks = parallel_state.get_rank_info()
     global_rank = 0
     for i in ranks:
@@ -570,8 +571,8 @@ class CoreAttention(MegatronModule):
         #     beta=0.0,
         #     alpha=(1.0 / self.norm_factor) if self.normalize_attention_scores else 1.0,
         # )
-        # alpha=(1.0 / self.norm_factor) if self.normalize_attention_scores else 1.0
-        # matmul_result = alpha*torch.bmm(query_layer.transpose(0, 1), key_layer.transpose(0, 1).transpose(1, 2))
+        alpha=(1.0 / self.norm_factor) if self.normalize_attention_scores else 1.0
+        matmul_result = alpha*torch.bmm(query_layer.transpose(0, 1), key_layer.transpose(0, 1).transpose(1, 2))
 
         print_rank0(f"------post baddbmm {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)} {matmul_result.shape} {matmul_result.shape}")
 
@@ -2170,12 +2171,14 @@ class ParallelTransformer(MegatronModule):
         # TODO: Add similar assert for encoder-decoder.
 
         self.num_layers = self.get_num_layers(num_layers)
-        buffer = torch.empty(
-            (96,1023,1023),
-            dtype=torch.bfloat16,
-            device=torch.cuda.current_device(),
-            requires_grad = False
-        )
+        # buffer = torch.empty(
+        #     (96,1023,1023),
+        #     dtype=torch.bfloat16,
+        #     device=torch.cuda.current_device(),
+        #     requires_grad = False
+        # )
+        buffer = None
+        
                     
         # Transformer layers.
         def build_layer(layer_number):
@@ -2608,8 +2611,7 @@ class ParallelTransformer(MegatronModule):
                         for i in ranks:
                             if i is not None:
                                 global_rank += i
-                        if global_rank == 0:
-                            print(f"mem_reserved layer {index}  {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
+                        print_rank0(f"mem_reserved layer {index}  {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
 
                         layer = self._get_layer(index)
                         past = None
@@ -2666,8 +2668,6 @@ class ParallelTransformer(MegatronModule):
                                 cross_attention_relative_position_bias=cross_attention_relative_position_bias,
                                 checkpoint_core_attention=checkpoint_core_attention,
                             )
-                        #do magic
-                        print(hidden_states.grad_fn)
 
         # Skip counter update for eval and activation checkpointing
         if torch.is_grad_enabled() and self.training:
