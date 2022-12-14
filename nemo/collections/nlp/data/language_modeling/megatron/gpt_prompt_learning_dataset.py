@@ -123,7 +123,8 @@ class GPTPromptLearningDataset(Dataset):
         skipped = 0
 
         for json_line in tqdm(dataset):
-
+            if len(self.examples) > 2000:
+                break
             # Read example dict or load the information for a single example from .json file
             if type(json_line) == dict:
                 doc = json_line
@@ -164,6 +165,7 @@ class GPTPromptLearningDataset(Dataset):
                 input_ids = input_ids + [self.tokenizer.eos_id]
 
             # Try to truncate input text to fit into the max sequence length
+            self.max_seq_length = 1024
             if len(input_ids) > self.max_seq_length:
                 input_ids = self._truncate_input(truncation_field, input_ids, taskname, doc)
 
@@ -333,6 +335,7 @@ class GPTPromptLearningDataset(Dataset):
 
         # Get max sequence length of batch
         batch_max = max(len(ids) for ids in input_ids)
+        batch_max = 1024
 
         if tp_workers > 1:
             # more sure the sequence length is multiply of number of tp_workers, needed for sequence parallel.
@@ -364,6 +367,7 @@ class GPTPromptLearningDataset(Dataset):
     def pad_batch_and_build_loss_mask(self, input_ids, batch_max, answer_starts):
         """ Pad input_ids in batch to max batch length while building loss mask """
         batch_loss_masks = []
+        padded_input_ids = []
         for ids, answer_start_idx in zip(input_ids, answer_starts):
             if answer_start_idx is not None:
                 # Loss mask where answer tokens are 1.0 and all other tokens are 0.0
@@ -374,18 +378,25 @@ class GPTPromptLearningDataset(Dataset):
 
             # Pad to max length
             input_length = len(ids)
-            padding_length = batch_max - input_length
-            ids.extend([self.pad_token_id] * padding_length)
+            if input_length < batch_max:
+                padding_length = batch_max - input_length	
+                pad_extend = [self.pad_token_id] * padding_length	
+                ids = ids + pad_extend
+                padded_input_ids.append(ids)	
+            elif input_length > batch_max:
+                del ids[batch_max:]
+                del loss_mask[batch_max:]
 
-            # Account for padding in loss mask
+            # Account for padding in loss mask	
             loss_mask.extend([0.0] * padding_length)
             batch_loss_masks.append(torch.tensor(loss_mask, dtype=torch.float))
 
         # Make into torch tensors
-        input_ids = torch.tensor(input_ids, dtype=torch.long)
+        padded_input_ids = torch.tensor(padded_input_ids, dtype=torch.long)
+ 
         batch_loss_masks = torch.stack(batch_loss_masks)
 
-        return input_ids, batch_loss_masks
+        return padded_input_ids, batch_loss_masks
 
     def inference_collate_fn(self, batch):
         """
@@ -396,7 +407,7 @@ class GPTPromptLearningDataset(Dataset):
         task_id_nums = torch.cuda.LongTensor(task_id_nums)
         batch_max = input_lengths.max().item()
         batch_max += self.tokens_to_generate
-
+        batch_max = 512
         input_ids, _ = self.pad_batch_and_build_loss_mask(input_ids, batch_max, answer_starts)
         input_ids = input_ids.cuda()
         input_ids = torch.cuda.LongTensor(input_ids)
