@@ -101,7 +101,6 @@ test_alloc = []
 """
 
 def print_rank0(txt):
-    return
     ranks = parallel_state.get_rank_info()
     global_rank = 0
     for i in ranks:
@@ -2074,7 +2073,6 @@ class ParallelTransformer(MegatronModule):
         moe_dropout=0.0,
     ):
         super(ParallelTransformer, self).__init__()
-        print(f"TEST TEST {hidden_dropout} {attention_dropout}")
         if kv_channels is None:
             assert (
                 hidden_size % num_attention_heads == 0
