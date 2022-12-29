@@ -100,6 +100,14 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
 
         # Need to overwrite some params in frozen model's config before restoring
         with open_dict(frozen_model_cfg):
+            frozen_model_cfg.transformer_engine = True
+            frozen_model_cfg.fp8 = True
+            frozen_model_cfg.fp8_e4m3= True
+            frozen_model_cfg.fp8_hybrid= False
+            frozen_model_cfg.fp8_margin= 0
+            frozen_model_cfg.fp8_interval= 1
+            frozen_model_cfg.fp8_amax_history_len= 1
+            frozen_model_cfg.fp8_amax_compute_algo= "most_recent"
             frozen_model_cfg.megatron_amp_O2 = False
             frozen_model_cfg.optim.name = "fused_adam"
             frozen_model_cfg.micro_batch_size = self.cfg.micro_batch_size
@@ -123,13 +131,10 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
         else:
             raise ValueError('precision must be in [32, 16, "bf16"]')
 
-        if cfg.get('language_model_path', None):
-            self.frozen_model = MegatronGPTModel.restore_from(
-                cfg.get('language_model_path'),
-                trainer=trainer,
-                save_restore_connector=save_restore_connector,
-                override_config_path=frozen_model_cfg,
-            ).to(dtype=self.autocast_dtype)
+        self.frozen_model = MegatronGPTModel(
+            cfg=frozen_model_cfg,
+            trainer=trainer,
+        ).to(dtype=self.autocast_dtype)
 
         # TODO: Enable amp_o2 training
         self.megatron_amp_o2 = False
@@ -614,7 +619,10 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
     def training_step(self, batch, batch_idx):
         # we zero grads here because we also call backward in the apex fwd/bwd functions
         self._optimizer.zero_grad()
+        print(batch[0].shape)
         loss_mean = self.fwd_bwd_step(batch, batch_idx, forward_only=False)
+        print(f"mem_reserved layer final: loss-{loss_mean} mem-{torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
+        input()
         self.allreduce_gradients()
 
         ## logging

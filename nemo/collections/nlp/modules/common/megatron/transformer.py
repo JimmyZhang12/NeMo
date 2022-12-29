@@ -92,6 +92,15 @@ except:
         hyperparameters: transformer hyperparameters
 """
 
+def print_rank0(txt):
+    ranks = parallel_state.get_rank_info()
+    global_rank = 0
+    for i in ranks:
+        if i is not None:
+            global_rank += i
+    if global_rank == 0:
+        print(txt)
+
 
 class ParallelMLP(MegatronModule):
     """MLP.
@@ -426,6 +435,7 @@ class CoreAttention(MegatronModule):
         # ==================================================
         # Update attention mask for inference. [b, np, sq, sk]
         # ==================================================
+        # print_rank0(f"------pre attention_mask {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
 
         if get_key_value:
             with torch.no_grad():
@@ -439,12 +449,15 @@ class CoreAttention(MegatronModule):
         # ===========================
         # Attention probs and dropout
         # ===========================
+        # print_rank0(f"------pre scale_mask_softmax {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)} {attention_scores.shape}")
 
         # attention scores and attention mask [b, np, sq, sk]
         attention_probs = self.scale_mask_softmax(attention_scores, attention_mask)
+        # print_rank0(f"------post scale_mask_softmax {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)} {attention_scores.shape}")
 
         # This is actually dropping out entire tokens to attend to, which might
         # seem a bit unusual, but is taken from the original Transformer paper.
+        # print_rank0(f"------pre attention_probs {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)} {attention_probs.shape}")
 
         if not self.sequence_parallel:
             with tensor_parallel.random.get_cuda_rng_tracker().fork():
@@ -858,6 +871,7 @@ class ParallelAttention(MegatronModule):
             past_key, past_value = layer_past
             key_layer = torch.cat((past_key.type_as(key_layer), key_layer), dim=0)
             value_layer = torch.cat((past_value.type_as(value_layer), value_layer), dim=0)
+        
 
         if get_key_value:
             present = (key_layer, value_layer)
@@ -1954,6 +1968,7 @@ class ParallelTransformer(MegatronModule):
 
         self.is_first_microbatch = True
         self.microbatch_count = 0  # transformer engine forward needs to know if it is working on the first microbatch
+        self.step_count = 0
         self.checkpoint_core_attention = (
             activations_checkpoint_granularity == 'selective'
         )  # transformer engine forward allows for more granular selective checkpointing
@@ -2386,6 +2401,7 @@ class ParallelTransformer(MegatronModule):
                 else:
                     if get_key_value:
                         presents = []
+                    print(f"mem_reserved layer init  {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
 
                     for index in range(self.num_layers):
                         layer = self._get_layer(index)
@@ -2415,7 +2431,6 @@ class ParallelTransformer(MegatronModule):
                             checkpoint_core_attention = False
 
                         if self.transformer_engine:
-
                             inference_params = None
 
                             hidden_states = layer(
@@ -2443,16 +2458,24 @@ class ParallelTransformer(MegatronModule):
                                 cross_attention_relative_position_bias=cross_attention_relative_position_bias,
                                 checkpoint_core_attention=checkpoint_core_attention,
                             )
+                        print(f"mem_reserved layer {index}  {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
 
         # Skip counter update for eval and activation checkpointing
         if torch.is_grad_enabled() and self.training:
             self.microbatch_count += 1
             if self.microbatch_count % num_micro_batches == 0:
                 self.microbatch_count = 0
+                self.step_count += 1 
                 self.is_first_microbatch = True
+
+                do_wgrad = any(p.requires_grad for p in self.parameters())
+                if do_wgrad or (self.step_count <= self.fp8_amax_history_len):
+                    self.is_first_microbatch = True
+                else:
+                    self.is_first_microbatch = False
             else:
                 self.is_first_microbatch = False
-
+        print(f"self.is_first_microbatch {self.fp8_amax_history_len} {self.microbatch_count} {self.step_count} {self.is_first_microbatch}")
         output = hidden_states
 
         # Final layer norm.

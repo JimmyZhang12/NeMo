@@ -238,7 +238,6 @@ class NLPSaveRestoreConnector(SaveRestoreConnector):
     def save_to(self, model, save_path: str):
         app_state = AppState()
         if app_state.model_parallel_size is not None and app_state.model_parallel_size > 1:
-
             dir_name = os.path.dirname(save_path)
 
             # first we save the weights for each model parallel rank
