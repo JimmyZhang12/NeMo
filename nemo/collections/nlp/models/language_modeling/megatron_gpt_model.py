@@ -192,7 +192,7 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
             fp8_amax_compute_algo=self.cfg.get('fp8_amax_compute_algo', 'most_recent'),
             use_emha=self.cfg.get('use_emha', False),
         )
-
+        
         return model
 
     def setup_optimizer_param_groups(self):
@@ -207,7 +207,7 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
             self._optimizer_param_groups = get_params_for_weight_decay_optimization(self.model)
 
     def configure_optimizers(self):
-
+        
         if self.with_distributed_adam:
 
             # Disable overlapped grad sync for embedding grad when

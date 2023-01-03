@@ -41,6 +41,10 @@ from nemo.collections.nlp.modules.common.megatron.utils import openai_gelu as op
 from nemo.core import adapter_mixins
 from nemo.utils import logging
 
+import nvtx_profiler
+nvtx_marker = nvtx_profiler.nvtx_markers()
+
+
 try:
     from apex.transformer import parallel_state, tensor_parallel
     from apex.transformer.enums import AttnMaskType, AttnType, ModelType
@@ -2089,6 +2093,8 @@ class ParallelTransformer(MegatronModule):
 
         self.layers = torch.nn.ModuleList([build_layer(i + 1 + offset) for i in range(self.num_layers)])
 
+
+
         if self.post_process and self.transformer_block_type != 'post_ln':
             # Final layer norm before output.
             if normalization == 'layernorm':
@@ -2312,6 +2318,8 @@ class ParallelTransformer(MegatronModule):
 
         return hidden_states
 
+
+
     def set_input_tensor(self, input_tensor):
         """Set input tensor to be used instead of forward()'s input.
 
@@ -2338,6 +2346,7 @@ class ParallelTransformer(MegatronModule):
         cross_attention_relative_position_bias=None,
         checkpoint_activations_all_layers=None,
     ):
+        nvtx_marker.push("microbatch_fwd")
         # Checks.
         if inference_max_sequence_len:
             assert self.activations_checkpoint_method is None, 'inference does not work with activation checkpointing'
@@ -2401,7 +2410,6 @@ class ParallelTransformer(MegatronModule):
                 else:
                     if get_key_value:
                         presents = []
-                    print(f"mem_reserved layer init  {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
 
                     for index in range(self.num_layers):
                         layer = self._get_layer(index)
@@ -2466,13 +2474,19 @@ class ParallelTransformer(MegatronModule):
             if self.microbatch_count % num_micro_batches == 0:
                 self.microbatch_count = 0
                 self.step_count += 1 
-                self.is_first_microbatch = True
 
                 do_wgrad = any(p.requires_grad for p in self.parameters())
                 if do_wgrad or (self.step_count <= self.fp8_amax_history_len):
                     self.is_first_microbatch = True
                 else:
                     self.is_first_microbatch = False
+                
+                if not do_wgrad and self.step_count == self.fp8_amax_history_len+1:
+                    for index in range(self.num_layers):
+                        layer = self._get_layer(index)
+                        layer.deallocate_weights()
+                    print("******************deallocating weights!!")
+                    
             else:
                 self.is_first_microbatch = False
         print(f"self.is_first_microbatch {self.fp8_amax_history_len} {self.microbatch_count} {self.step_count} {self.is_first_microbatch}")
@@ -2486,5 +2500,7 @@ class ParallelTransformer(MegatronModule):
 
         if get_key_value:
             output = [output, presents]
+
+        nvtx_marker.pop()
 
         return output

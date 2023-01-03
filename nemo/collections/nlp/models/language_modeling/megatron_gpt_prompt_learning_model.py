@@ -106,8 +106,8 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
             frozen_model_cfg.fp8_hybrid= False
             frozen_model_cfg.fp8_margin= 0
             frozen_model_cfg.fp8_interval= 1
-            frozen_model_cfg.fp8_amax_history_len= 1
-            frozen_model_cfg.fp8_amax_compute_algo= "most_recent"
+            frozen_model_cfg.fp8_amax_history_len= 4
+            frozen_model_cfg.fp8_amax_compute_algo="max"
             frozen_model_cfg.megatron_amp_O2 = False
             frozen_model_cfg.optim.name = "fused_adam"
             frozen_model_cfg.micro_batch_size = self.cfg.micro_batch_size
@@ -404,7 +404,7 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
         freezing the model's params but still allowing for the needed gradients
         to be passed around in pipeline parallel models. The prompt-encoder 
         and/or prompt table will use the learning rate set by the user. 
-        """
+        """    
         # Freeze frozen model
         for param in self.frozen_model.parameters():
             param.requires_grad = False
@@ -619,8 +619,8 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
     def training_step(self, batch, batch_idx):
         # we zero grads here because we also call backward in the apex fwd/bwd functions
         self._optimizer.zero_grad()
-        print(batch[0].shape)
         loss_mean = self.fwd_bwd_step(batch, batch_idx, forward_only=False)
+        print(batch[0].shape)
         print(f"mem_reserved layer final: loss-{loss_mean} mem-{torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
         input()
         self.allreduce_gradients()
