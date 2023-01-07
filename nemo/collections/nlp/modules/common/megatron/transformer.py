@@ -65,7 +65,6 @@ try:
     from transformer_engine.pytorch import TransformerLayer, fp8_autocast
     from transformer_engine.common import recipe
     from transformer_engine.pytorch.distributed import checkpoint as te_checkpoint
-
     HAVE_TE = True
 
 except:
@@ -1972,7 +1971,6 @@ class ParallelTransformer(MegatronModule):
 
         self.is_first_microbatch = True
         self.microbatch_count = 0  # transformer engine forward needs to know if it is working on the first microbatch
-        self.step_count = 0
         self.checkpoint_core_attention = (
             activations_checkpoint_granularity == 'selective'
         )  # transformer engine forward allows for more granular selective checkpointing
@@ -2466,30 +2464,17 @@ class ParallelTransformer(MegatronModule):
                                 cross_attention_relative_position_bias=cross_attention_relative_position_bias,
                                 checkpoint_core_attention=checkpoint_core_attention,
                             )
-                        print(f"mem_reserved layer {index}  {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
+                        # print(f"mem_reserved layer {index}  {torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
 
         # Skip counter update for eval and activation checkpointing
         if torch.is_grad_enabled() and self.training:
             self.microbatch_count += 1
             if self.microbatch_count % num_micro_batches == 0:
                 self.microbatch_count = 0
-                self.step_count += 1 
-
-                do_wgrad = any(p.requires_grad for p in self.parameters())
-                if do_wgrad or (self.step_count <= self.fp8_amax_history_len):
-                    self.is_first_microbatch = True
-                else:
-                    self.is_first_microbatch = False
-                
-                if not do_wgrad and self.step_count == self.fp8_amax_history_len+1:
-                    for index in range(self.num_layers):
-                        layer = self._get_layer(index)
-                        layer.deallocate_weights()
-                    print("******************deallocating weights!!")
+                self.is_first_microbatch = True
                     
             else:
                 self.is_first_microbatch = False
-        print(f"self.is_first_microbatch {self.fp8_amax_history_len} {self.microbatch_count} {self.step_count} {self.is_first_microbatch}")
         output = hidden_states
 
         # Final layer norm.

@@ -106,7 +106,7 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
             frozen_model_cfg.fp8_hybrid= False
             frozen_model_cfg.fp8_margin= 0
             frozen_model_cfg.fp8_interval= 1
-            frozen_model_cfg.fp8_amax_history_len= 4
+            frozen_model_cfg.fp8_amax_history_len= 1
             frozen_model_cfg.fp8_amax_compute_algo="max"
             frozen_model_cfg.megatron_amp_O2 = False
             frozen_model_cfg.optim.name = "fused_adam"
@@ -620,9 +620,9 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
         # we zero grads here because we also call backward in the apex fwd/bwd functions
         self._optimizer.zero_grad()
         loss_mean = self.fwd_bwd_step(batch, batch_idx, forward_only=False)
-        print(batch[0].shape)
+        # print(batch[0].shape)
         print(f"mem_reserved layer final: loss-{loss_mean} mem-{torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
-        input()
+        # input()
         self.allreduce_gradients()
 
         ## logging
@@ -761,6 +761,13 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
 
         self.setup_training_data()
         self.setup_validation_data()
+
+        
+        from transformer_engine.pytorch import fp8_autocast
+        with fp8_autocast(enabled=True):
+            for index in range(self.frozen_model.model.language_model.encoder.num_layers):
+                layer = self.frozen_model.model.language_model.encoder._get_layer(index)
+                layer.deallocate_and_cast_weights()
 
     def setup_training_data(self, training_data_config=None):
         if self.cfg.data.get('train_ds', None):
