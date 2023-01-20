@@ -88,22 +88,25 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
         super().__init__(cfg, trainer)
 
         self.cfg = cfg
-        save_restore_connector = NLPSaveRestoreConnector()
-        if os.path.isdir(cfg.get('language_model_path')):
-            save_restore_connector.model_extracted_dir = cfg.get('language_model_path')
-        frozen_model_cfg = MegatronGPTModel.restore_from(
-            cfg.get('language_model_path'),
-            trainer=trainer,
-            return_config=True,
-            save_restore_connector=save_restore_connector,
-        )
+        # save_restore_connector = NLPSaveRestoreConnector()
+        # frozen_model_cfg = cfg.get(cfg_path)
+        from omegaconf import OmegaConf
+        frozen_model_cfg = OmegaConf.load(cfg.get('config_path'))
+        # if os.path.isdir(cfg.get('language_model_path')):
+            # save_restore_connector.model_extracted_dir = cfg.get(cfg_path)
+        # frozen_model_cfg = MegatronGPTModel.restore_from(
+        #     cfg.get(cfg_path),
+        #     trainer=trainer,
+        #     return_config=True,
+        #     save_restore_connector=save_restore_connector,
+        # )
 
         # Need to overwrite some params in frozen model's config before restoring
         with open_dict(frozen_model_cfg):
-            frozen_model_cfg.transformer_engine = True
+            frozen_model_cfg.transformer_engine = False
             frozen_model_cfg.fp8 = True
             frozen_model_cfg.fp8_e4m3= True
-            frozen_model_cfg.fp8_hybrid= False
+            frozen_model_cfg.fp8_hybrid= True
             frozen_model_cfg.fp8_margin= 0
             frozen_model_cfg.fp8_interval= 1
             frozen_model_cfg.fp8_amax_history_len= 1
@@ -617,10 +620,26 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
         return loss_mean
 
     def training_step(self, batch, batch_idx):
+        #batch = [x.cuda(non_blocking=True) for x in batch]
+        #input_ids, labels, loss_mask, position_ids, attention_mask, taskname_ids = batch
+        #input_ids = torch.rand([8,512,6144], dtype=torch.bfloat16,device="cuda")
+        # attention_mask = torch.rand([8,1,512,512], dtype=torch.bfloat16,device="cuda")
+
+        # for index in range(self.frozen_model.model.language_model.encoder.num_layers):
+        #     layer = self.frozen_model.model.language_model.encoder._get_layer(index)
+        #     torch.cuda.synchronize() 
+        #     input_ids = layer(
+        #             input_ids,
+        #             attention_mask=None,
+        #             checkpoint_core_attention=False,
+        #         )
+        #     torch.cuda.synchronize() 
+
+        # output_tensor = self.frozen_model.model.language_model.encoder(input_ids, None)       
+
         # we zero grads here because we also call backward in the apex fwd/bwd functions
         self._optimizer.zero_grad()
         loss_mean = self.fwd_bwd_step(batch, batch_idx, forward_only=False)
-        # print(batch[0].shape)
         print(f"mem_reserved layer final: loss-{loss_mean} mem-{torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
         # input()
         self.allreduce_gradients()
@@ -628,18 +647,18 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
         ## logging
         # we can only log on one rank if it is rank zero so we broadcast from last rank
         # we can avoid this broadcast by updating the PTL log function to accept specific ranks
-        torch.distributed.broadcast(loss_mean, get_last_rank())
+        # torch.distributed.broadcast(loss_mean, get_last_rank())
 
-        if self.cfg.precision == 16 and hasattr(self.trainer.precision_plugin.scaler, "_scale"):
-            loss_scale = self.trainer.precision_plugin.scaler._scale
-            if loss_scale is not None:
-                self.log('loss_scale', loss_scale)
+        # if self.cfg.precision == 16 and hasattr(self.trainer.precision_plugin.scaler, "_scale"):
+        #     loss_scale = self.trainer.precision_plugin.scaler._scale
+        #     if loss_scale is not None:
+        #         self.log('loss_scale', loss_scale)
 
-        self.log('reduced_train_loss', loss_mean, prog_bar=True, rank_zero_only=True)
-        lr = self._optimizer.param_groups[0]['lr']
-        self.log('lr', lr, rank_zero_only=True)
-        self.log('global_step', self.trainer.global_step, prog_bar=True, rank_zero_only=True)
-        return loss_mean
+        # self.log('reduced_train_loss', loss_mean, prog_bar=True, rank_zero_only=True)
+        # lr = self._optimizer.param_groups[0]['lr']
+        # self.log('lr', lr, rank_zero_only=True)
+        # self.log('global_step', self.trainer.global_step, prog_bar=True, rank_zero_only=True)
+        return None
 
     def backward(self, *args, **kwargs):
         """ LightningModule hook to do backward.
@@ -762,12 +781,17 @@ class MegatronGPTPromptLearningModel(MegatronBaseModel, TextGeneration):
         self.setup_training_data()
         self.setup_validation_data()
 
-        
-        from transformer_engine.pytorch import fp8_autocast
-        with fp8_autocast(enabled=True):
-            for index in range(self.frozen_model.model.language_model.encoder.num_layers):
-                layer = self.frozen_model.model.language_model.encoder._get_layer(index)
-                layer.deallocate_and_cast_weights()
+        if self.frozen_model.cfg.get('transformer_engine', False):
+            self.frozen_model.setup_transformer_engine_tp_groups()
+
+        # print(f"1mem_reserved layer final: mem-{torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
+        if self.frozen_model.cfg.get('fp8', False):
+            from transformer_engine.pytorch import fp8_autocast
+            with fp8_autocast(enabled=True):
+                for index in range(self.frozen_model.model.language_model.encoder.num_layers):
+                    layer = self.frozen_model.model.language_model.encoder._get_layer(index)
+                    # layer.deallocate_and_cast_weights()
+        # print(f"2mem_reserved layer final: mem-{torch.cuda.memory_reserved()/(1024**2)} {torch.cuda.memory_allocated()/(1024**2)}")
 
     def setup_training_data(self, training_data_config=None):
         if self.cfg.data.get('train_ds', None):

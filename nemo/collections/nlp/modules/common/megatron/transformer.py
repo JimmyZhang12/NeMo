@@ -504,7 +504,7 @@ class CoreAttention(MegatronModule):
 
 
 class ParallelAttention(MegatronModule):
-    """Parallel self-attention layer abstract class.
+    """Parallel self-attentionls layer abstract class.
 
     Self-attention layer takes input with size [s, b, h]
     and returns output of the same size.
@@ -2004,7 +2004,7 @@ class ParallelTransformer(MegatronModule):
                     kv_channels=kv_channels,
                     self_attn_mask_type=self_attn_mask_type.name,
                     tp_size=parallel_state.get_tensor_model_parallel_world_size(),
-                    params_dtype=torch.float32,  # dtype params are initialized in
+                    params_dtype=torch.bfloat16,  # dtype params are initialized in
                     get_rng_state_tracker=tensor_parallel.random.get_cuda_rng_tracker,
                     fuse_wgrad_accumulation=gradient_accumulation_fusion,
                     apply_query_key_layer_scaling=apply_query_key_layer_scaling,
