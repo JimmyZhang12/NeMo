@@ -22,7 +22,6 @@ import tempfile
 from pathlib import Path
 import typing
 from typing import Dict, List, Tuple
-import torch
 import numpy as np
 import tensorrt_llm
 from tensorrt_llm import str_dtype_to_trt
@@ -40,11 +39,7 @@ from .model_config import (
 )
 from .nemo.nemo import UnpackedNemoCheckpointDir, unpack_nemo_ckpt
 from .nemo.nemo_ckpt_convert import build_tokenizer, convert_checkpoint, convert_dist_checkpoint, convert_nemo_model
-from .tensor_utils import get_tensor_from_dict, split
-from megatron.core import parallel_state
-from .tensor_utils import get_tensor_parallel_group
-from nemo.collections.common.tokenizers.sentencepiece_tokenizer import SentencePieceTokenizer
-
+from .tensor_utils import get_tensor_from_dict, split, get_tensor_parallel_group
 
 LOGGER = logging.getLogger("NeMo")
 
@@ -216,14 +211,14 @@ def nemo_model_to_model_config(
     nemo_model: str, 
     decoder_type: str, 
     nemo_model_config: str, 
-    tokenizer = None,
+    dtype_str: str = "float32",
 ) -> Tuple[List[ModelConfig], PreTrainedTokenizer]:
     """Converts the NEMO model object and construct the `ModelConfig` before tensorrt_llm deployment."""
-    dtype_str = "float32"
+    from megatron.core import parallel_state
     assert nemo_model_config is not None, "gpt_model_config must be provided when in is a nemo model"
 
     weights_dict, llm_model_config = convert_nemo_model(
-        nemo_model, nemo_model_config, dtype_str, tokenizer, decoder_type)
+        nemo_model, nemo_model_config, dtype_str, decoder_type)
     is_mcore = nemo_model_config.get("mcore_gpt", False)
     llm_model_config.is_mcore = is_mcore
 
@@ -258,7 +253,7 @@ def nemo_model_to_model_config(
     model_config.mapping.rank = tensorrt_llm.mpi_rank()
     model_config.mapping.tp_group = get_tensor_parallel_group(tensor_parallel_size)
 
-    print(f'''rank {tensorrt_llm.mpi_rank()} mapping:
+    LOGGER.info(f'''Resharing: Rank {tensorrt_llm.mpi_rank()} mapping:
         tp_rank  {parallel_state.get_tensor_model_parallel_rank()} -> {model_config.mapping.tp_rank}, 
         pp_rank  {parallel_state.get_pipeline_model_parallel_rank()} -> {model_config.mapping.pp_rank}, 
         tp_group {model_config.mapping.tp_group}'''
@@ -283,31 +278,3 @@ def nemo_model_to_model_config(
     model_config.lm_head.weight = lm_head_weight
     
     return [model_config]
-
-#By default nemo export uses T5Tokenizer
-#wrap NeMo SentencePieceTokenizer functions to match T5Tokenizer
-class WrappedNemoSentencePiece(SentencePieceTokenizer):
-    def __init__(self, tokenizer):
-        assert type(tokenizer) is SentencePieceTokenizer
-        self.nemo_tokenizer = tokenizer
-
-    @property
-    def bos_token_id(self):
-        return self.nemo_tokenizer.bos_id
-    @property
-    def eos_token_id(self):
-        return self.nemo_tokenizer.eos_id
-
-    def encode(self, ids, add_special_tokens=False):
-        return self.nemo_tokenizer.text_to_ids(ids)
-    
-    def batch_decode(self, ids, skip_special_tokens=False):
-        if isinstance(ids, torch.Tensor):
-                ids = ids.cpu().numpy()
-        return self.nemo_tokenizer.ids_to_text(ids)
-
-    def __getattr__(self, attr):
-        if attr in self.__dict__:
-            return getattr(self, attr)
-        return getattr(self.nemo_tokenizer, attr)
-

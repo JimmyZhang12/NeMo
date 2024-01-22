@@ -15,11 +15,10 @@ Referrence impl in tensorrt_llm: examples/llama/summarize.py.
 
 import json
 import os
-import psutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
-from nemo.utils import logging
+import logging
 
 import tensorrt_llm
 import torch
@@ -32,6 +31,8 @@ from .tensorrt_llm_build import get_engine_name, MODEL_NAME, refit_runtime_engin
 from .tensorrt_llm_model import LMHeadModelBuilder
 
 from .tensor_utils import get_tensor_parallel_group
+
+LOGGER = logging.getLogger("NeMo")
 
 
 @dataclass
@@ -155,6 +156,7 @@ def _forward(
         temperature: float = 1.0,
         prompt_table=None,
         task_vocab_size=None,
+        task_ids: List[int]=None,
         stop_words_list=None,
         bad_words_list=None,
         no_repeat_ngram_size=None,
@@ -203,36 +205,30 @@ def _forward(
                 raise Exception("task_vocab_size cannot be None")
 
             task_vocab_size = torch.tensor([task_vocab_size], dtype=torch.int32, device="cuda")
-
-            if isinstance(line_encoded, list):
-                le_size = len(line_encoded)
-            else:
-                le_size = line_encoded.size(0)
-            tasks = torch.zeros(le_size).cuda()
-
+            task_ids = torch.tensor(task_ids, dtype=torch.int32, device="cuda")
             prompt_table = prompt_table.cuda()
-            ptuning_args = [prompt_table, tasks, task_vocab_size]
+            ptuning_args = [prompt_table, task_ids, task_vocab_size]
 
         with torch.no_grad():
             sampling_config.top_k = top_k
             sampling_config.top_p = top_p
             sampling_config.temperature = temperature
-            for key, param in sampling_kwargs:
+            for key, param in sampling_kwargs.items():
                 # set any additional SamplingConfig kwargs
                 setattr(sampling_config, key, param)
 
             decoder.setup(batch_size, max_context_length=max_length, max_new_tokens=max_output_len)
             if decoder.remove_input_padding:
                 if stop_words_list is not None:
-                    logging.warning("stop_words_list should be set to None with remove_input_padding=True "
+                    LOGGER.warning("stop_words_list should be set to None with remove_input_padding=True "
                                   "and it will be ignored.")
 
                 if bad_words_list is not None:
-                    logging.warning("bad_words_list should be set to None with remove_input_padding=True "
+                    LOGGER.warning("bad_words_list should be set to None with remove_input_padding=True "
                                   "and it will be ignored.")
 
                 if no_repeat_ngram_size is not None:
-                    logging.warning("no_repeat_ngram_size should be set to None with remove_input_padding=True "
+                    LOGGER.warning("no_repeat_ngram_size should be set to None with remove_input_padding=True "
                                   "and it will be ignored.")
 
                 output_ids = decoder.decode_batch(line_encoded, sampling_config)
@@ -247,16 +243,12 @@ def _forward(
                     no_repeat_ngram_size=no_repeat_ngram_size,
                     streaming=streaming,
                 )
-        
-            cum_log_probs = decoder.log_probs
-
             torch.cuda.synchronize()
-
-            runtime_rank = tensorrt_llm.mpi_rank()
-            if runtime_rank == 0 or multiprocessed_env:
-                return output_ids, cum_log_probs
-            else:
-                return None
+        runtime_rank = tensorrt_llm.mpi_rank()
+        if runtime_rank == 0 or multiprocessed_env:
+            return output_ids, decoder.log_probs
+        else:
+            return None
 
     except Exception as e:
         print(e)
@@ -299,22 +291,16 @@ def load(
     )
 
 def load_refit(
-    tokenizer: PreTrainedTokenizer, 
+    tokenizer, 
     engine_dir: str, 
     num_beams: int = 1, 
-    multiprocessed_env: bool = False,
     model_configs: List = None,
+    stream = None,
 ) -> TensorrtLLMHostContext:
     """Loaded the compiled LLM model and run it.
 
     It also supports running the TRT LLM model on multi-GPU.
     """
-
-    print(
-        f"Before Engine loading rank {tensorrt_llm.mpi_rank()}, CPU RAM Used (GB):"
-        f" {psutil.Process().memory_info().rss / 1024 / 1024 / 1024}"
-    )
-    
 
     config_path = os.path.join(engine_dir, "config.json")
     with open(config_path, "r") as f:
@@ -343,14 +329,15 @@ def load_refit(
     engine_name = get_engine_name(
         MODEL_NAME, dtype, tensor_parallel_size, pipeline_parallel_size, tensorrt_llm.mpi_rank())
 
-    print(f"loading engine: {torch.cuda.current_device()} ({tensorrt_llm.mpi_rank()} {tensorrt_llm.mpi_world_size()}) {engine_dir}/{engine_name}")
+    logger.info(
+        f"Loading engine: Rank ({tensorrt_llm.mpi_rank()} -> {engine_dir}/{engine_name}")
 
     serialize_path = os.path.join(engine_dir, engine_name)
     with open(serialize_path, "rb") as f:
         engine_buffer = f.read()
         
     decoder = tensorrt_llm.runtime.GenerationSession(
-        model_config, engine_buffer, runtime_mapping, debug_mode=False, )
+        model_config, engine_buffer, runtime_mapping, debug_mode=False, stream=stream)
     runtime_mapping.rank = runtime_rank
     runtime_mapping.tp_group = get_tensor_parallel_group(
         tensor_parallel_size
@@ -360,8 +347,6 @@ def load_refit(
     runtime_mapping.pp_group = [runtime_rank]  
     runtime_mapping.pp_rank = 0
     
-    print(f"done loading engine: {torch.cuda.current_device()}")
-
     sampling_config = SamplingConfig(
         end_id=tokenizer.eos_token_id, pad_id=tokenizer.eos_token_id, num_beams=num_beams
     )
@@ -381,11 +366,6 @@ def load_refit(
     max_batch_size = config["builder_config"]["max_batch_size"]
     max_input_len = config["builder_config"]["max_input_len"]
 
-    print(
-        f"After Engine loading rank {tensorrt_llm.mpi_rank()}, CPU RAM Used (GB):"
-        f" {psutil.Process().memory_info().rss / 1024 / 1024 / 1024}"
-    )
-
     return TensorrtLLMHostContext(
         executor=None,
         world_size=world_size,
@@ -404,11 +384,11 @@ def forward(
         temperature: float = 1.0,
         prompt_table=None,
         task_vocab_size=None,
+        task_ids: List[int]=None,
         stop_words_list=None,
         bad_words_list=None,
         no_repeat_ngram_size=None,
         streaming: bool = False,
-        output_log_probs=False,
         multiprocessed_env=False,
         **sampling_kwargs,
 
@@ -435,11 +415,11 @@ def forward(
             temperature=temperature,
             prompt_table=prompt_table,
             task_vocab_size=task_vocab_size,
+            task_ids=task_ids,
             stop_words_list=stop_words_list,
             bad_words_list=bad_words_list,
             no_repeat_ngram_size=no_repeat_ngram_size,
             streaming=streaming,
-            output_log_probs=output_log_probs,
             multiprocessed_env=multiprocessed_env,
             **sampling_kwargs
         )
@@ -456,11 +436,11 @@ def forward(
                 temperature=temperature,
                 prompt_table=prompt_table,
                 task_vocab_size=task_vocab_size,
+                task_ids=task_ids,
                 stop_words_list=stop_words_list,
                 bad_words_list=bad_words_list,
                 no_repeat_ngram_size=no_repeat_ngram_size,
                 streaming=streaming,
-                output_log_probs=output_log_probs,
                 **sampling_kwargs
             )
             futures.append(future)
@@ -481,6 +461,7 @@ def generate(
         temperature: float = 1.0,
         prompt_table=None,
         task_vocab_size=None,
+        task_ids: List[int]=None,
         stop_words_list=None,
         bad_words_list=None,
         no_repeat_ngram_size=None,
@@ -495,21 +476,20 @@ def generate(
     Returns a 2D string list with shape [batch_size, num_beams].
     """
     tokenizer = host_context.tokenizer
-    if isinstance(input_texts, tuple):
-        # Support the token id input.
-        input_tensors, input_length_tensor = input_texts
+    if add_BOS:
+        input_tensors = [[tokenizer.bos_token_id] + tokenizer.encode(s) for s in input_texts]
+        input_tensors = [torch.IntTensor(t) for t in input_tensors]
     else:
-        if add_BOS:
-            input_tensors = [[tokenizer.bos_token_id] + tokenizer.encode(s, add_special_tokens=False) for s in input_texts]
-        else:
-            input_tensors = [tokenizer.encode(s, add_special_tokens=False) for s in input_texts]
-    input_tensors = [torch.IntTensor(t) for t in input_tensors]
+        input_tensors = [
+                torch.IntTensor(tokenizer.encode(t)) for t in input_texts
+            ]
 
     batch_size = len(input_texts)
+
     stop_words_list_tensors = None
     if stop_words_list is not None:
         stop_words_list_tensors = [
-            tokenizer.encode(t, add_special_tokens=False) for t in stop_words_list
+            tokenizer.encode(t) for t in stop_words_list
         ]
         stop_words_list_tensors = torch.IntTensor(stop_words_list_tensors)
         stop_words_list_tensors = stop_words_list_tensors.unsqueeze(0).repeat(batch_size, 1, 1).to(
@@ -518,7 +498,7 @@ def generate(
     bad_words_list_tensors = None
     if bad_words_list is not None:
         bad_words_list_tensors = [
-            tokenizer.encode(t, add_special_tokens=False) for t in bad_words_list
+            tokenizer.encode(t) for t in bad_words_list
         ]
         bad_words_list_tensors = torch.IntTensor(bad_words_list_tensors)
         bad_words_list_tensors = bad_words_list_tensors.unsqueeze(0).repeat(batch_size, 1, 1).to(
@@ -528,7 +508,7 @@ def generate(
         no_repeat_ngram_size = torch.IntTensor(no_repeat_ngram_size).to(
             torch.cuda.current_device())
     
-    output_tensor, log_probs = forward(
+    outputs, log_probs = forward(
         input_tensors=input_tensors,
         max_output_len=max_output_len,
         host_context=host_context,
@@ -537,24 +517,103 @@ def generate(
         temperature=temperature,
         prompt_table=prompt_table,
         task_vocab_size=task_vocab_size,
+        task_ids=task_ids,
         stop_words_list=stop_words_list_tensors,
         bad_words_list=bad_words_list_tensors,
         no_repeat_ngram_size=no_repeat_ngram_size,
-        streaming=streaming,
+        streaming=False,
         output_log_probs=output_log_probs,
         multiprocessed_env=multiprocessed_env,
         **sampling_kwargs
     )
-    assert output_tensor is not None
-    if isinstance(output_tensor, torch.Tensor):
-        output_tensor = output_tensor.cpu().numpy()
+    assert outputs is not None
 
     input_lengths = [t.shape[0] for t in input_tensors]
+
     output_lines_list = [
-        tokenizer.batch_decode(output_tensor[b, :, input_lengths[b] :], skip_special_tokens=True) 
-        for b in range(output_tensor.shape[0])
+        tokenizer.batch_decode(outputs[b, :, input_lengths[b] :])
+        for b in range(outputs.shape[0])
     ]
-    return output_lines_list, log_probs
+
+    if output_log_probs:
+        return output_lines_list, log_probs
+    return output_lines_list
+
+
+def generate_streaming(
+        input_texts: List[str],
+        max_output_len: int,
+        host_context: TensorrtLLMHostContext,
+        top_k: int = 1,
+        top_p: float = 0.0,
+        temperature: float = 1.0,
+        prompt_table=None,
+        task_vocab_size=None,
+        task_ids: List[int]=None,
+        stop_words_list=None,
+        bad_words_list=None,
+        no_repeat_ngram_size=None,
+        **sampling_kwargs,
+) -> Optional[List[List[str]]]:
+    """Generate the output sequence from the input sequence.
+
+    Returns a 2D string list with shape [batch_size, num_beams].
+    """
+    tokenizer = host_context.tokenizer
+    input_tensors = [
+        torch.IntTensor(tokenizer.encode(t)) for t in input_texts
+    ]
+
+    batch_size = len(input_texts)
+
+    stop_words_list_tensors = None
+    if stop_words_list is not None:
+        stop_words_list_tensors = [
+            tokenizer.encode(t) for t in stop_words_list
+        ]
+        stop_words_list_tensors = torch.IntTensor(stop_words_list_tensors)
+        stop_words_list_tensors = stop_words_list_tensors.unsqueeze(0).repeat(batch_size, 1, 1).to(
+            torch.cuda.current_device())
+
+    bad_words_list_tensors = None
+    if bad_words_list is not None:
+        bad_words_list_tensors = [
+            tokenizer.encode(t) for t in bad_words_list
+        ]
+        bad_words_list_tensors = torch.IntTensor(bad_words_list_tensors)
+        bad_words_list_tensors = bad_words_list_tensors.unsqueeze(0).repeat(batch_size, 1, 1).to(
+            torch.cuda.current_device())
+
+    if no_repeat_ngram_size is not None:
+        no_repeat_ngram_size = torch.IntTensor(no_repeat_ngram_size).to(
+            torch.cuda.current_device())
+
+    outputs = forward(
+        input_tensors=input_tensors,
+        max_output_len=max_output_len,
+        host_context=host_context,
+        top_k=top_k,
+        top_p=top_p,
+        temperature=temperature,
+        prompt_table=prompt_table,
+        task_vocab_size=task_vocab_size,
+        task_ids=task_ids,
+        stop_words_list=stop_words_list_tensors,
+        bad_words_list=bad_words_list_tensors,
+        no_repeat_ngram_size=no_repeat_ngram_size,
+        streaming=True,
+        **sampling_kwargs
+    )
+    assert outputs is not None
+
+    input_lengths = [t.shape[0] for t in input_tensors]
+
+    for cur_outputs in outputs:
+        output_lines_list = [
+            tokenizer.batch_decode(cur_outputs[b, :, input_lengths[b] :])
+            for b in range(len(cur_outputs))
+        ]
+        yield output_lines_list
 
 def unload(host_context: TensorrtLLMHostContext):
     """Frees the GPU resource from the TensorrtLLMHostContext and reset the host_context."""

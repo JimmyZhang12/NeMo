@@ -18,12 +18,14 @@ import shutil
 import typing
 from collections import defaultdict
 from pathlib import Path
+from types import MethodType
 
 import numpy as np
 import torch
 from tensorrt_llm._utils import str_dtype_to_torch, torch_to_numpy, np_bfloat16
 from tqdm import tqdm
 from transformers import GPT2Tokenizer, LlamaConfig, T5Tokenizer, AutoTokenizer
+from .sentencepiece_tokenizer import SentencePieceTokenizer
 
 import tensorstore  # this is important even though not used
 import zarr
@@ -34,6 +36,7 @@ from .convert import (
     split_and_save_weight,
 )
 from .nemo import UnpackedNemoCheckpointDir, extract_layers_with_prefix, nemo_to_llm_config
+from nemo.collections.common.tokenizers.tokenizer_spec import TokenizerSpec
 
 LOGGER = logging.getLogger("NeMo")
 
@@ -254,8 +257,8 @@ def convert_checkpoint(unpacked_checkpoints_dir: UnpackedNemoCheckpointDir, args
     llm_config = nemo_to_llm_config(
         nemo_model_config,
         vocab_size,
-        tokenizer.eos_token_id,
-        tokenizer.bos_token_id,
+        None,
+        None,
         args.decoder_type,
     )
 
@@ -437,6 +440,7 @@ def convert_dist_checkpoint(unpacked_checkpoints_dir: UnpackedNemoCheckpointDir,
         # AMMO modification.
         tokenizer_config["model"] = os.path.join(out_dir, "tokenizer.model")
         tokenizer = build_tokenizer(tokenizer_config)
+
     llm_config = nemo_to_llm_config(
         nemo_model_config,
         vocab_size,
@@ -462,7 +466,7 @@ def convert_dist_checkpoint(unpacked_checkpoints_dir: UnpackedNemoCheckpointDir,
 
 @torch.no_grad()
 def convert_nemo_model(
-    nemo_model, nemo_model_config, storage_type_str, tokenizer=None, decoder_type=None):
+    nemo_model, nemo_model_config, storage_type_str, decoder_type=None):
     from megatron.core import parallel_state
 
     is_mcore = nemo_model_config.get("mcore_gpt", False)
@@ -493,7 +497,6 @@ def convert_nemo_model(
     is_pp_resharding = False
     if pp_size > 1:
         is_pp_resharding = True
-        print(f"Resharding from pp{pp_size} to pp1 ")
         
     if num_kv_heads == 0:
         if multi_query_mode:
@@ -640,8 +643,8 @@ def convert_nemo_model(
     llm_config = nemo_to_llm_config(
         nemo_model_config, 
         vocab_size, 
-        tokenizer.eos_id, 
-        tokenizer.bos_id, 
+        None,
+        None,
         decoder_type=decoder_type # how to get eos_id and bos_id from different tokenizer?
     )
     llm_config.is_mcore = is_mcore
@@ -703,19 +706,32 @@ def copy_tokenizer_files(config, out_dir):
         shutil.copy(path.as_posix(), dst_path.as_posix())
 
 
-def build_tokenizer(tokenizer_config: typing.Dict):
-    if tokenizer_config["library"] == "sentencepiece":
-        # AMMO modification.
-        # Turn off legacy model by default: See https://github.com/huggingface/transformers/pull/24622
-        tokenizer = T5Tokenizer(tokenizer_config["model"], extra_ids=0, legacy=False)
-    elif "GPT2" in tokenizer_config["type"]:
-        tokenizer = GPT2Tokenizer(tokenizer_config["vocab_file"], tokenizer_config["merge_file"])
-    else:
-        raise ValueError(f'Tokenizer type {tokenizer_config["library"]} not handled')
+def build_tokenizer(tokenizer):
+    if isinstance(tokenizer, dict):
+        tokenizer_config = tokenizer
+        if tokenizer_config["library"] == "sentencepiece":
+            return SentencePieceTokenizer(model_path=tokenizer_config["model"])
+        elif "GPT2" in tokenizer_config["type"]:
+            tokenizer = GPT2Tokenizer(tokenizer_config["vocab_file"], tokenizer_config["merge_file"])
+        else:
+            raise ValueError(f'Tokenizer type {tokenizer_config["library"]} not handled')
 
-    if tokenizer.bos_token_id is None:
-        tokenizer.add_special_tokens({"bos_token": "<s>"})
-    if tokenizer.eos_token_id is None:
-        tokenizer.add_special_tokens({"eos_token": "</s>"})
+        if tokenizer.bos_token_id is None:
+            tokenizer.add_special_tokens({"bos_token": "<s>"})
+        if tokenizer.eos_token_id is None:
+            tokenizer.add_special_tokens({"eos_token": "</s>"})
+    elif isinstance(tokenizer, TokenizerSpec):
+        #If NeMo tokenizer already exists, monkey patch interface
+        def batch_encode_patch(self, ids):
+            if torch.is_tensor(ids):
+                ids = ids.cpu().numpy()
+            return self.ids_to_text(ids)
+        tokenizer.bos_token_id = tokenizer.bos_id
+        tokenizer.eos_token_id = tokenizer.eos_id
+        tokenizer.encode = tokenizer.text_to_ids
+        TokenizerSpec.batch_decode = batch_encode_patch
+    else:
+        raise TypeError(f'Unsupported tokenizer build input: {type(tokenizer)}')
 
     return tokenizer
+
