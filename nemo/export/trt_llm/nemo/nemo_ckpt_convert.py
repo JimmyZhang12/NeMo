@@ -608,9 +608,17 @@ def convert_nemo_model(
                     "share_weights" : False,
                 }
             )
-    starmap_args = tqdm(starmap_args, desc="saving weights")
+    starmap_args = tqdm(starmap_args, desc="saving weights", disable=True)
+
+    # import time
+    # tic = time.time()
+    # times = {}
     for starmap_arg in starmap_args:
         split_and_save_weight(**starmap_arg)
+
+    for key, val in trt_inflight_weights.items():
+        if torch.is_tensor(val):
+            trt_inflight_weights[key] = torch_to_numpy(val)
     
     # Collect weights from different pp stages
     # Assume each rank has the same number of layers

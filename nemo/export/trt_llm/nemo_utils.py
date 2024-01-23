@@ -211,7 +211,7 @@ def nemo_model_to_model_config(
     nemo_model: str, 
     decoder_type: str, 
     nemo_model_config: str, 
-    dtype_str: str = "float32",
+    dtype_str: str = "bfloat16",
 ) -> Tuple[List[ModelConfig], PreTrainedTokenizer]:
     """Converts the NEMO model object and construct the `ModelConfig` before tensorrt_llm deployment."""
     from megatron.core import parallel_state
