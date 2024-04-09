@@ -200,7 +200,7 @@ def nemo_llm_to_model_config(
 def to_word_list_format(
     word_dict: List[List[str]], 
     tokenizer=None, 
-    ref_str="Green tea icecream",
+    ref_str="<extra_id_1>",
 ):
     '''
     format of word_dict
