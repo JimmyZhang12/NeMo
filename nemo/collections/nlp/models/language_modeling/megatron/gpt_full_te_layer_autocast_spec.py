@@ -14,6 +14,7 @@
 
 from importlib.metadata import version
 from typing import Any, Callable, Optional
+from functools import partial
 
 import torch
 from pkg_resources import packaging
